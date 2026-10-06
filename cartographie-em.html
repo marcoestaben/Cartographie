@@ -145,6 +145,33 @@
   .prio-tools{display:flex;gap:6px;align-items:center;margin-left:auto}
   .prio-rank{font-size:10px;font-weight:600;color:var(--ink-2);min-width:18px;text-align:right}
   .prio-reset{margin-bottom:8px}
+
+  /* Arithmétique 2D : un bloc par texte */
+  .c-block{padding:0 0 4px}
+  .c-block + .c-block, .c-cross{border-top:1px solid var(--rule)}
+  .c-name{font-size:12px;font-weight:700;color:var(--ink);padding:8px 14px 2px}
+  .c-flags,.c-cross-flags{display:flex;gap:6px;flex-wrap:wrap;padding:6px 14px 4px}
+  .cflag{font-size:10.5px;padding:2px 8px;border:1px solid var(--rule);border-radius:var(--radius-xs);color:var(--ink-3)}
+  .cflag.ok{background:var(--ink);border-color:var(--ink);color:#fff;font-weight:700}
+  .cflag.maybe{background:var(--indecis-bg);color:var(--ink-2)}
+  .c-cross{padding:6px 0 4px}
+  .c-cross .c-name{padding-top:4px}
+
+  /* Plan 2D */
+  .board.plane-mode{display:block}
+  .plane-wrap{display:grid;grid-template-columns:22px 1fr;grid-template-rows:auto 22px;gap:6px;width:min(100%,680px);margin:0 auto}
+  .plane{position:relative;aspect-ratio:1/1;background:var(--paper);border:1px solid var(--rule);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;touch-action:none}
+  .plane-grid{position:absolute;inset:0;display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(3,1fr)}
+  .plane-zone{border:1px dashed var(--rule);padding:4px 6px;font-size:10px;font-weight:700;color:var(--ink-3)}
+  .plane-zone.zx-reforme{background:var(--reforme-bg)} .plane-zone.zx-indecis{background:var(--indecis-bg)} .plane-zone.zx-ets{background:var(--ets-bg)}
+  .plane-zone.both-reforme{box-shadow:inset 0 0 0 2px var(--reforme)}
+  .plane-zone.both-ets{box-shadow:inset 0 0 0 2px var(--ets)}
+  .plane-axis-y{writing-mode:vertical-rl;transform:rotate(180deg);display:flex;justify-content:space-around;align-items:center;font-size:10.5px;font-weight:600;color:var(--ink-2)}
+  .plane-axis-x{grid-column:2;display:flex;justify-content:space-around;font-size:10.5px;font-weight:600;color:var(--ink-2)}
+  .dot{position:absolute;transform:translate(-50%,50%);display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:50%;background:var(--paper);border:2px solid var(--ink-3);cursor:grab;touch-action:none;user-select:none;line-height:1;box-shadow:var(--shadow)}
+  .dot .flag{font-size:14px}
+  .dot .dc{font-size:8px;font-weight:700;color:var(--ink-2)}
+  .dot.dragging{cursor:grabbing;z-index:5;border-color:var(--ink)}
   .nopos{font-size:11px;color:var(--ink-3);margin-top:6px;font-style:italic}
 
   dialog{border:1px solid var(--rule);box-shadow:var(--shadow-lg);padding:0;border-radius:var(--radius);overflow:hidden;background:var(--paper);width:min(760px,94vw);color:var(--ink);font-family:var(--sans)}
@@ -215,9 +242,7 @@
   <h1 id="title">Cartographie des positions</h1>
   <div class="council" id="councilPanel">
     <div class="c-title">Arithmétique du Conseil — poids en population</div>
-    <div class="thresh top"><span style="left:35%">35 % · minorité de blocage</span><span style="left:65%">65 % · majorité qualifiée</span></div>
-    <div class="bar"><div class="seg r" id="segR"></div><div class="seg i" id="segI"></div><div class="seg e" id="segE"></div></div>
-    <div class="thresh bot"><span style="left:65%">minorité de blocage · 35 %</span><span style="left:35%">majorité qualifiée · 65 %</span></div>
+    <div id="councilBars"></div>
     <div class="hint" id="legend"></div>
   </div>
 </header>
@@ -230,6 +255,7 @@
     <button type="button" class="pf-btn" id="pfBtn" aria-haspopup="listbox" aria-expanded="false"><span class="pf-label" id="pfLabel">Tous les paramètres</span><span class="pf-caret">▾</span></button>
     <div class="pf-menu" id="pfMenu" role="listbox" hidden></div>
   </div>
+  <button class="btn ghost" id="btnPlane" aria-pressed="false">Plan 2D</button>
   <button class="btn ghost" id="btnCompact" aria-pressed="false">Vue compacte</button>
   <button class="btn ghost" id="btnCfg">Configurer</button>
   <span class="file-state" id="grStatus">Connexion à Grist…</span>
@@ -246,7 +272,8 @@
 <dialog id="modal">
   <div class="m-head"><span class="flag" id="mFlag"></span><span class="m-title" id="mName"></span><span class="pop" id="mPop"></span></div>
   <div class="m-body">
-    <div class="field"><span class="lab">Camp</span><div class="camp-pick" id="mCamp"></div></div>
+    <div class="field"><span class="lab" id="mCampLab">Camp</span><div class="camp-pick" id="mCamp"></div></div>
+    <div class="field"><span class="lab" id="mCamp2Lab">Camp — texte 2</span><div class="camp-pick" id="mCamp2"></div></div>
     <div class="field"><span class="lab">Positions sur les paramètres</span><div id="mParams"></div></div>
     <div class="field"><span class="lab">Références générales</span><textarea id="mNote" rows="4" placeholder="Documents, interlocuteurs, échéances…"></textarea></div>
   </div>
@@ -260,6 +287,13 @@
     <div class="field">
       <span class="lab">Intitulé</span>
       <input id="cfgTitle" style="width:100%;padding:6px 8px;border:1px solid var(--rule);font-size:13px;font-family:var(--sans);background:#FBFBFC">
+    </div>
+    <div class="field">
+      <span class="lab">Textes du plan 2D (axe horizontal · axe vertical)</span>
+      <div class="cfg-poles">
+        <input id="cfgT1" placeholder="Texte 1 (défaut : ETS)">
+        <input id="cfgT2" placeholder="Texte 2 (défaut : Texte 2)">
+      </div>
     </div>
     <div class="field"><span class="lab">Nom des camps</span><div id="cfgCamps"></div></div>
     <div class="field">
@@ -314,7 +348,10 @@ let TABLE = null;
 let lastRecords = [];
 let canWrite = null;      // null = inconnu, true/false après essai
 let hasPrioCol = false;   // colonne « Priorites » présente (ordre de priorité par pays)
-let prioColTried = false;
+let hasPlanCols = false;  // colonnes Camp2 / Plan_X / Plan_Y présentes (plan 2D)
+let colsTried = false;
+let texts = {t1:'ETS', t2:'Texte 2'};   // intitulés des deux textes du plan 2D
+let planeMode = false;
 
 const esc = s => String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const norm = s => String(s==null?'':s).trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
@@ -442,6 +479,7 @@ async function loadConfig(){
   camps = Object.assign({}, DEFAULT_CAMPS);
   CAMP_ORDER.forEach(id=>{ if(CFG['camp_'+id]) camps[id] = CFG['camp_'+id]; });
   title = CFG.titre || title;
+  texts = {t1: CFG.texte1 || 'ETS', t2: CFG.texte2 || 'Texte 2'};
 }
 
 /* ---------- Détection des paramètres ---------- */
@@ -493,7 +531,10 @@ function fromRecords(records){
     const prio = String(r.Priorites||'').split(',').map(s=>s.trim())
       .filter((id,i,a)=>id && a.indexOf(id)===i && params.some(p=>p.id===id));
     c[code] = {rowId:r.id, name:r.Pays||code, w:Number(r.Poids)||0,
-               camp: campIn[norm(r.Camp)] || 'indecis', note:r.Notes||'', pos:pos, prio:prio};
+               camp: campIn[norm(r.Camp)] || 'indecis', note:r.Notes||'', pos:pos, prio:prio,
+               camp2: campIn[norm(r.Camp2)] || 'indecis',
+               x: typeof r.Plan_X==='number' ? r.Plan_X : null,
+               y: typeof r.Plan_Y==='number' ? r.Plan_Y : null};
     order.push(code); tot += Number(r.Poids)||0;
   });
   data = {countries:c, order:order}; TOTAL = tot || 1;
@@ -547,7 +588,8 @@ async function repairSchema(){
       actions.push(['AddColumn', TABLE, col+'_Src', {type:'Text', label:'Source — '+name}]);
       actions.push(['AddColumn', TABLE, col+'_Tag', {type:'Text', label:'Tag — '+name}]);
     });
-    if(!hasPrioCol) actions.push(['AddColumn', TABLE, 'Priorites', {type:'Text', label:'Priorités'}]);
+    const present = lastRecords.length ? Object.keys(lastRecords[0]) : [];
+    Object.keys(EXTRA_COLS).filter(c=>!present.includes(c)).forEach(c=>actions.push(['AddColumn', TABLE, c, EXTRA_COLS[c]()]));
     await applyActions(actions);
     await writeConfig(DEFAULT_PARAMS.map(([col,name,phrase])=>({col:col,name:name,phrase:phrase})), camps, title);
     grStatus('Colonnes créées. Le tableau se recharge.');
@@ -581,9 +623,11 @@ async function ensureConfigTable(){
   return {table:t, keyCol:keyCol, valCol:valCol};
 }
 
-async function writeConfig(paramList, campList, newTitle){
+async function writeConfig(paramList, campList, newTitle, newTexts){
   const {table, keyCol, valCol} = await ensureConfigTable();
   const entries = {titre: newTitle};
+  const tx = newTexts || texts;
+  entries.texte1 = tx.t1; entries.texte2 = tx.t2;
   CAMP_ORDER.forEach(id=>{ entries['camp_'+id] = campList[id]; });
   paramList.forEach((p,i)=>{
     entries['param.'+p.col+'.nom'] = p.name;
@@ -616,9 +660,29 @@ function prioOrder(code, list){
   const rank = p => { const i = prio.indexOf(p.id); return i<0 ? 1e6 : i; };
   return base.map((p,i)=>({p:p,i:i})).sort((a,b)=>rank(a.p)-rank(b.p) || a.i-b.i).map(x=>x.p);
 }
-const inCamp = id => data.order.filter(c=>data.countries[c].camp===id).sort((a,b)=>data.countries[b].w-data.countries[a].w);
+const campOf = (code, axis) => axis===2 ? data.countries[code].camp2 : data.countries[code].camp;
+const inCamp = (id, axis) => data.order.filter(c=>campOf(c,axis)===id).sort((a,b)=>data.countries[b].w-data.countries[a].w);
 const pctOf = codes => codes.reduce((s,c)=>s+data.countries[c].w,0)/TOTAL*100;
 const isQM = codes => codes.length>=15 && pctOf(codes)>=65;
+const isMB = codes => codes.length>=4 && pctOf(codes)>35;
+
+/* ---------- Plan 2D : zones et coordonnées ----------
+   Chaque axe (0–100) est coupé en trois zones : camp 1 (0–33), indécis, camp 2 (67–100).
+   Le camp est dérivé de la zone ; sans coordonnée valide, le pays est placé au centre
+   de la zone de son camp, avec un léger décalage stable pour éviter l'empilement. */
+const zoneOf = v => v < 100/3 ? 'reforme' : (v > 200/3 ? 'ets' : 'indecis');
+const ZONE_CENTER = {reforme:100/6, indecis:50, ets:500/6};
+function jitter(code, k){
+  let h = k; for(let i=0;i<code.length;i++) h = (h*31 + code.charCodeAt(i)) % 1000;
+  return (h/1000 - .5) * 16;
+}
+function coordOf(code){
+  const d = data.countries[code];
+  const x = (d.x!=null && zoneOf(d.x)===d.camp)  ? d.x : ZONE_CENTER[d.camp]  + jitter(code, 7);
+  const y = (d.y!=null && zoneOf(d.y)===d.camp2) ? d.y : ZONE_CENTER[d.camp2] + jitter(code, 13);
+  return {x:x, y:y};
+}
+const clamp100 = v => Math.max(0, Math.min(100, v));
 
 function renderChrome(){
   document.getElementById('title').textContent = title;
@@ -689,8 +753,9 @@ let compact = false;
 
 function render(){
   const fp = pFilterValue;
-  const p = fp ? visibleParams().find(x=>x.id===fp) : null;
+  const p = (fp && !planeMode) ? visibleParams().find(x=>x.id===fp) : null;
   document.body.classList.toggle('view-stance', !!p);
+  board.classList.toggle('plane-mode', planeMode);
   const banner = document.getElementById('stanceBanner');
   if(p){
     banner.style.display='';
@@ -699,6 +764,7 @@ function render(){
       'La colonne centrale réunit les États indécis. Glissez pour fixer une position.';
   } else banner.style.display='none';
   if(p) renderByStance(p, compact);
+  else if(planeMode) renderPlane();
   else renderByCamp(compact);
   council();
 }
@@ -817,8 +883,10 @@ function wireDrop(drop){
     e.preventDefault(); drop.classList.remove('over');
     const code=e.dataTransfer.getData('text/plain'); const camp=drop.dataset.camp;
     if(!code||!data.countries[code]||data.countries[code].camp===camp) return;
-    data.countries[code].camp=camp; render();
-    await pushRow(code, {Camp: camps[camp]});
+    data.countries[code].camp=camp; data.countries[code].x=null; render();
+    const f = {Camp: camps[camp]};
+    if(hasPlanCols) f.Plan_X = null;     // la coordonnée n'est plus dans la zone du camp
+    await pushRow(code, f);
   });
 }
 
@@ -853,10 +921,110 @@ function council(){
   const stance = document.body.classList.contains('view-stance');
   document.getElementById('councilPanel').style.display = stance ? 'none' : '';
   if(stance) return;
-  CAMP_ORDER.forEach((id,i)=>{
-    const seg=document.getElementById(['segR','segI','segE'][i]); const p=pctOf(inCamp(id));
-    seg.style.flexBasis=p+'%'; seg.textContent=p>7?p.toFixed(0)+' %':'';
+  let html = councilBlock(1, texts.t1);
+  if(hasPlanCols) html += councilBlock(2, texts.t2) + councilCross();
+  document.getElementById('councilBars').innerHTML = html;
+}
+
+const cflag = (label, ok, maybe) =>
+  '<span class="cflag '+(ok?'ok':(maybe?'maybe':''))+'">'+label+(maybe&&!ok?' · avec les indécis':'')+'</span>';
+const OTHER_CAMP = {reforme:'ets', ets:'reforme'};
+
+/* Jauge d'un texte : camps en bandeau, jalons de seuil, et potentiel MQ / blocage de chaque camp. */
+function councilBlock(axis, name){
+  const R=inCamp('reforme',axis), I=inCamp('indecis',axis), E=inCamp('ets',axis);
+  const seg=(cls,codes)=>{ const p=pctOf(codes); return '<div class="seg '+cls+'" style="flex-basis:'+p+'%">'+(p>7?p.toFixed(0)+' %':'')+'</div>'; };
+  const flags = ['reforme','ets'].map(id=>{
+    const own = id==='reforme'?R:E, withI = own.concat(I);
+    return cflag(esc(camps[id])+' : majorité qualifiée', isQM(own), isQM(withI)) +
+           cflag(esc(camps[id])+' : minorité de blocage', isMB(own), isMB(withI));
+  }).join('');
+  return '<div class="c-block"><div class="c-name">'+esc(name)+'</div>'+
+    '<div class="thresh top"><span style="left:35%">35 % · minorité de blocage</span><span style="left:65%">65 % · majorité qualifiée</span></div>'+
+    '<div class="bar">'+seg('r',R)+seg('i',I)+seg('e',E)+'</div>'+
+    '<div class="thresh bot"><span style="left:65%">minorité de blocage · 35 %</span><span style="left:35%">majorité qualifiée · 65 %</span></div>'+
+    '<div class="c-flags">'+flags+'</div></div>';
+}
+
+/* Croisement des deux textes : MQ obtenue sur les deux à la fois, blocage possible sur l'un au moins. */
+function councilCross(){
+  const flags = ['reforme','ets'].map(id=>{
+    const other = OTHER_CAMP[id];
+    const both = data.order.filter(c=>campOf(c,1)===id && campOf(c,2)===id);
+    const bothMaybe = data.order.filter(c=>campOf(c,1)!==other && campOf(c,2)!==other);
+    const blk = a => isMB(inCamp(id,a));
+    const blkMaybe = a => isMB(inCamp(id,a).concat(inCamp('indecis',a)));
+    return cflag(esc(camps[id])+' : majorité qualifiée sur les deux textes', isQM(both), isQM(bothMaybe)) +
+           cflag(esc(camps[id])+' : blocage sur au moins un texte', blk(1)||blk(2), blkMaybe(1)||blkMaybe(2));
+  }).join('');
+  return '<div class="c-cross"><div class="c-name">Croisement « '+esc(texts.t1)+' » × « '+esc(texts.t2)+' »</div>'+
+    '<div class="c-cross-flags">'+flags+'</div></div>';
+}
+
+/* ---------- Plan 2D ---------- */
+function renderPlane(){
+  const q = document.getElementById('search').value.trim().toLowerCase();
+  board.innerHTML = '';
+  if(!hasPlanCols){
+    board.innerHTML = '<div class="empty">Colonnes du plan 2D (Camp2, Plan_X, Plan_Y) absentes de la table : rechargez le widget avec « Full document access ».</div>';
+    return;
+  }
+  // lignes de bas en haut = camp 1, indécis, camp 2 (axe vertical) ; colonnes de gauche à droite (axe horizontal)
+  let zones = '';
+  ['ets','indecis','reforme'].forEach(ry=>{   // rangées affichées de haut en bas
+    CAMP_ORDER.forEach(cx=>{
+      const codes = data.order.filter(c=>campOf(c,1)===cx && campOf(c,2)===ry);
+      const both = (cx===ry && cx!=='indecis') ? ' both-'+cx : '';
+      zones += '<div class="plane-zone zx-'+cx+both+'">'+codes.length+' · '+pctOf(codes).toFixed(1)+' %</div>';
+    });
   });
+  const axisX = CAMP_ORDER.map(id=>'<span>'+esc(camps[id])+'</span>').join('');
+  const axisY = CAMP_ORDER.map(id=>'<span>'+esc(camps[id])+'</span>').join('');
+  board.innerHTML = '<div class="plane-wrap">'+
+    '<div class="plane-axis-y" title="'+esc(texts.t2)+'">'+axisY+'</div>'+
+    '<div class="plane" id="plane"><div class="plane-grid">'+zones+'</div></div>'+
+    '<div class="plane-axis-x">'+axisX+'</div></div>';
+  const plane = document.getElementById('plane');
+  data.order.filter(c=>matchQ(c,q)).forEach(code=>{
+    const d = data.countries[code], pt = coordOf(code);
+    const size = Math.round(26 + Math.sqrt(d.w)*5);
+    const dot = document.createElement('div');
+    dot.className = 'dot'; dot.dataset.code = code;
+    dot.style.cssText = 'left:'+pt.x+'%;bottom:'+pt.y+'%;width:'+size+'px;height:'+size+'px';
+    dot.title = d.name+' — '+d.w.toFixed(2)+' % · '+texts.t1+' : '+camps[d.camp]+' · '+texts.t2+' : '+camps[d.camp2];
+    dot.innerHTML = '<span class="flag">'+(FLAGS[code]||'')+'</span><span class="dc">'+esc(code)+'</span>';
+    wireDot(dot, plane, code);
+    plane.appendChild(dot);
+  });
+}
+
+function wireDot(dot, plane, code){
+  let sx=0, sy=0, moved=false;
+  const pos = e => {
+    const r = plane.getBoundingClientRect();
+    return {x: clamp100((e.clientX-r.left)/r.width*100), y: clamp100((r.bottom-e.clientY)/r.height*100)};
+  };
+  dot.addEventListener('pointerdown', e=>{
+    sx=e.clientX; sy=e.clientY; moved=false;
+    dot.setPointerCapture(e.pointerId); dot.classList.add('dragging');
+  });
+  dot.addEventListener('pointermove', e=>{
+    if(!dot.hasPointerCapture(e.pointerId)) return;
+    if(!moved && Math.hypot(e.clientX-sx, e.clientY-sy) < 4) return;
+    moved = true;
+    const p = pos(e); dot.style.left=p.x+'%'; dot.style.bottom=p.y+'%';
+  });
+  dot.addEventListener('pointerup', async e=>{
+    if(!dot.hasPointerCapture(e.pointerId)) return;
+    dot.releasePointerCapture(e.pointerId); dot.classList.remove('dragging');
+    if(!moved){ openCard(code); return; }
+    const p = pos(e), d = data.countries[code];
+    d.x = Math.round(p.x*10)/10; d.y = Math.round(p.y*10)/10;
+    d.camp = zoneOf(d.x); d.camp2 = zoneOf(d.y);
+    render();
+    await pushRow(code, {Plan_X:d.x, Plan_Y:d.y, Camp:camps[d.camp], Camp2:camps[d.camp2]});
+  });
+  dot.addEventListener('pointercancel', ()=>{ dot.classList.remove('dragging'); render(); });
 }
 
 /* ---------- Fiche ---------- */
@@ -869,6 +1037,11 @@ function openCard(code){
   document.getElementById('mNote').value=d.note||'';
   document.getElementById('mCamp').innerHTML=CAMP_ORDER.map(id=>
     '<label><input type="radio" name="camp" value="'+id+'" '+(d.camp===id?'checked':'')+'><span>'+esc(camps[id])+'</span></label>').join('');
+  document.getElementById('mCampLab').textContent = 'Camp — ' + texts.t1;
+  document.getElementById('mCamp2Lab').textContent = 'Camp — ' + texts.t2;
+  document.getElementById('mCamp2').parentElement.style.display = hasPlanCols ? '' : 'none';
+  document.getElementById('mCamp2').innerHTML=CAMP_ORDER.map(id=>
+    '<label><input type="radio" name="camp2" value="'+id+'" '+(d.camp2===id?'checked':'')+'><span>'+esc(camps[id])+'</span></label>').join('');
   document.getElementById('mParams').innerHTML='<div class="prio-reset"><button type="button" class="btn ghost mini" id="prioReset">Réinitialiser l\'ordre</button></div>'+prioOrder(code, params).map(p=>{
     const v=d.pos[p.id]||{};
     return '<div class="param '+(v.stance?'active':'')+'" data-p="'+p.id+'">'+
@@ -918,9 +1091,17 @@ function openCard(code){
 
 document.getElementById('mSave').addEventListener('click', async ()=>{
   const d=data.countries[current];
+  const prevCamp=d.camp, prevCamp2=d.camp2;
   d.camp=document.querySelector('#mCamp input:checked').value;
   d.note=document.getElementById('mNote').value;
   d.pos={}; const fields={Camp:camps[d.camp], Notes:d.note};
+  if(hasPlanCols){
+    d.camp2=document.querySelector('#mCamp2 input:checked').value;
+    // un changement de camp replace le pays au centre de sa nouvelle zone
+    if(d.camp!==prevCamp) d.x=null;
+    if(d.camp2!==prevCamp2) d.y=null;
+    fields.Camp2=camps[d.camp2]; fields.Plan_X=d.x; fields.Plan_Y=d.y;
+  }
   // Ordre de priorité : on ne stocke que s'il diffère de l'ordre global.
   const ids = Array.from(document.querySelectorAll('#mParams .param')).map(el=>el.dataset.p);
   const sameAsGlobal = ids.length===params.length && ids.every((id,i)=>id===params[i].id);
@@ -951,6 +1132,11 @@ document.getElementById('pfMenu').addEventListener('click', (e)=>{
 });
 document.addEventListener('click', (e)=>{ if(!e.target.closest('#pFilterWrap')) closePf(); });
 document.addEventListener('keydown', (e)=>{ if(e.key==='Escape') closePf(); });
+document.getElementById('btnPlane').addEventListener('click', ()=>{
+  planeMode = !planeMode;
+  document.getElementById('btnPlane').setAttribute('aria-pressed', planeMode ? 'true' : 'false');
+  render();
+});
 document.getElementById('btnCompact').addEventListener('click', ()=>{
   compact = !compact;
   document.getElementById('btnCompact').setAttribute('aria-pressed', compact ? 'true' : 'false');
@@ -963,6 +1149,8 @@ let draft = null;
 
 function cfgRender(){
   document.getElementById('cfgTitle').value = draft.title;
+  document.getElementById('cfgT1').value = draft.texts.t1;
+  document.getElementById('cfgT2').value = draft.texts.t2;
   document.getElementById('cfgIntro').innerHTML =
     'Les modifications sont écrites dans le document Grist : renommer met à jour la table <b>Config</b>, '
     + 'ajouter ou supprimer un paramètre crée ou retire les colonnes correspondantes ; cocher « Cacher ce paramètre et ses tags » le retire de la vue pays sans supprimer ses données. '
@@ -997,6 +1185,8 @@ function cfgRender(){
 
 function cfgCollect(){
   draft.title = document.getElementById('cfgTitle').value.trim() || draft.title;
+  draft.texts = {t1: document.getElementById('cfgT1').value.trim() || draft.texts.t1,
+                 t2: document.getElementById('cfgT2').value.trim() || draft.texts.t2};
   document.querySelectorAll('#cfgCamps input').forEach(i=>{
     const v = i.value.trim(); if(v) draft.camps[i.dataset.camp] = v;
   });
@@ -1010,7 +1200,7 @@ function cfgCollect(){
 }
 
 document.getElementById('btnCfg').addEventListener('click', ()=>{
-  draft = {title: title, camps: Object.assign({}, camps),
+  draft = {title: title, texts: Object.assign({}, texts), camps: Object.assign({}, camps),
            params: params.map(p=>Object.assign({}, p)), removed: []};
   cfgRender();
   cfgModal.showModal();
@@ -1095,10 +1285,15 @@ document.getElementById('cfgSave').addEventListener('click', async ()=>{
     if(renamed.length){
       actions.push(['ModifyColumn', TABLE, 'Camp', {widgetOptions: JSON.stringify(
         {choices: CAMP_ORDER.map(id=>draft.camps[id])})}]);
+      if(hasPlanCols) actions.push(['ModifyColumn', TABLE, 'Camp2', {widgetOptions: JSON.stringify(
+        {choices: CAMP_ORDER.map(id=>draft.camps[id])})}]);
       lastRecords.forEach(r=>{
-        const old = String(r.Camp||'').trim();
-        const hit = renamed.find(id=>camps[id] === old);
-        if(hit) actions.push(['UpdateRecord', TABLE, r.id, {Camp: draft.camps[hit]}]);
+        const f = {};
+        const hit = renamed.find(id=>camps[id] === String(r.Camp||'').trim());
+        if(hit) f.Camp = draft.camps[hit];
+        const hit2 = hasPlanCols && renamed.find(id=>camps[id] === String(r.Camp2||'').trim());
+        if(hit2) f.Camp2 = draft.camps[hit2];
+        if(Object.keys(f).length) actions.push(['UpdateRecord', TABLE, r.id, f]);
       });
     }
     if(actions.length) await applyActions(actions);
@@ -1125,12 +1320,12 @@ document.getElementById('cfgSave').addEventListener('click', async ()=>{
     // seconde étape : les intitulés lisibles. Un échec ici ne remet pas en cause
     // les colonnes et les camps, déjà écrits.
     try{
-      await writeConfig(draft.params, draft.camps, draft.title);
+      await writeConfig(draft.params, draft.camps, draft.title, draft.texts);
       grStatus(newParams.length
         ? newParams.length+' paramètre(s) ajouté(s) : colonnes créées'+visNote
         : 'Configuration appliquée dans Grist');
     }catch(e2){
-      camps = Object.assign({}, draft.camps); title = draft.title;
+      camps = Object.assign({}, draft.camps); title = draft.title; texts = Object.assign({}, draft.texts);
       grStatus('Colonnes et camps mis à jour, mais la table Config n\'a pas pu être écrite : '+errText(e2), true);
     }
     cfgModal.close();
@@ -1142,6 +1337,14 @@ document.getElementById('cfgSave').addEventListener('click', async ()=>{
 });
 
 /* ---------- Démarrage ---------- */
+// Colonnes ajoutées au-delà du schéma de base : créées automatiquement si absentes.
+const EXTRA_COLS = {
+  Priorites: ()=>({type:'Text', label:'Priorités'}),
+  Camp2:     ()=>({type:'Choice', label:'Camp — texte 2', widgetOptions: JSON.stringify({choices: CAMP_ORDER.map(id=>camps[id])})}),
+  Plan_X:    ()=>({type:'Numeric', label:'Plan X'}),
+  Plan_Y:    ()=>({type:'Numeric', label:'Plan Y'})
+};
+
 // Convertit le format colonnes de fetchTable ({id:[...], Code:[...]}) en lignes.
 function columnarToRows(t){
   const cols = Object.keys(t);
@@ -1168,17 +1371,20 @@ async function refresh(){
     try{ records = columnarToRows(await grist.docApi.fetchTable(TABLE)); }
     catch(e){ /* on garde le flux si la lecture directe échoue */ }
   }
-  hasPrioCol = records.length > 0 && Object.prototype.hasOwnProperty.call(records[0], 'Priorites');
-  if(!hasPrioCol && records.length && TABLE && !prioColTried){
-    prioColTried = true;   // une seule tentative : la création relance onRecords
+  const has = c => records.length > 0 && Object.prototype.hasOwnProperty.call(records[0], c);
+  const missing = Object.keys(EXTRA_COLS).filter(c=>!has(c));
+  if(missing.length && records.length && TABLE && !colsTried){
+    colsTried = true;   // une seule tentative : la création relance onRecords
     try{
-      await applyActions([['AddColumn', TABLE, 'Priorites', {type:'Text', label:'Priorités'}]]);
-      await makeColumnsVisible(['Priorites']);
-      hasPrioCol = true;
+      await applyActions(missing.map(c=>['AddColumn', TABLE, c, EXTRA_COLS[c]()]));
+      await makeColumnsVisible(missing);
+      records.forEach(r=>{ missing.forEach(c=>{ r[c] = null; }); });
     }catch(e){
       if(isAccessError(e)) canWrite = false;
     }
   }
+  hasPrioCol = has('Priorites');
+  hasPlanCols = has('Camp2') && has('Plan_X') && has('Plan_Y');
   fromRecords(records);
   renderChrome(); render(); showSetup();
   if(params.length) grStatus(data.order.length + ' États membres · ' + params.length + ' paramètres');
