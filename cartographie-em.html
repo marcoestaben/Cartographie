@@ -141,6 +141,10 @@
   .tag.def{color:var(--ets);border-color:var(--ets);background:var(--ets-bg)}
   .tag.amb{color:var(--amb);border-color:var(--amb);background:var(--amb-bg)}
   .tag .src{opacity:.55;margin-left:3px}
+  .tag .rk{display:inline-block;min-width:12px;margin-right:4px;padding:0 3px;border:1px solid currentColor;border-radius:7px;font-size:8.5px;font-weight:700;line-height:11px;text-align:center}
+  .prio-tools{display:flex;gap:6px;align-items:center;margin-left:auto}
+  .prio-rank{font-size:10px;font-weight:600;color:var(--ink-2);min-width:18px;text-align:right}
+  .prio-reset{margin-bottom:8px}
   .nopos{font-size:11px;color:var(--ink-3);margin-top:6px;font-style:italic}
 
   dialog{border:1px solid var(--rule);box-shadow:var(--shadow-lg);padding:0;border-radius:var(--radius);overflow:hidden;background:var(--paper);width:min(760px,94vw);color:var(--ink);font-family:var(--sans)}
@@ -309,6 +313,8 @@ let CFG = {};
 let TABLE = null;
 let lastRecords = [];
 let canWrite = null;      // null = inconnu, true/false après essai
+let hasPrioCol = false;   // colonne « Priorites » présente (ordre de priorité par pays)
+let prioColTried = false;
 
 const esc = s => String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const norm = s => String(s==null?'':s).trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
@@ -484,8 +490,10 @@ function fromRecords(records){
       const tag = p.tagCol ? String(r[p.tagCol]||'').trim() : '';
       if(st || src || tag) pos[p.id] = {stance: st||'amb', source: src, label: tag};
     });
+    const prio = String(r.Priorites||'').split(',').map(s=>s.trim())
+      .filter((id,i,a)=>id && a.indexOf(id)===i && params.some(p=>p.id===id));
     c[code] = {rowId:r.id, name:r.Pays||code, w:Number(r.Poids)||0,
-               camp: campIn[norm(r.Camp)] || 'indecis', note:r.Notes||'', pos:pos};
+               camp: campIn[norm(r.Camp)] || 'indecis', note:r.Notes||'', pos:pos, prio:prio};
     order.push(code); tot += Number(r.Poids)||0;
   });
   data = {countries:c, order:order}; TOTAL = tot || 1;
@@ -539,6 +547,7 @@ async function repairSchema(){
       actions.push(['AddColumn', TABLE, col+'_Src', {type:'Text', label:'Source — '+name}]);
       actions.push(['AddColumn', TABLE, col+'_Tag', {type:'Text', label:'Tag — '+name}]);
     });
+    if(!hasPrioCol) actions.push(['AddColumn', TABLE, 'Priorites', {type:'Text', label:'Priorités'}]);
     await applyActions(actions);
     await writeConfig(DEFAULT_PARAMS.map(([col,name,phrase])=>({col:col,name:name,phrase:phrase})), camps, title);
     grStatus('Colonnes créées. Le tableau se recharge.');
@@ -598,6 +607,15 @@ async function writeConfig(paramList, campList, newTitle){
 /* ---------- Rendu ---------- */
 const board = document.getElementById('board');
 const visibleParams = () => params.filter(p=>!p.hidden);
+
+/* Paramètres dans l'ordre de priorité propre au pays : les classés d'abord,
+   puis les autres dans l'ordre global. */
+function prioOrder(code, list){
+  const base = list || visibleParams();
+  const prio = data.countries[code].prio || [];
+  const rank = p => { const i = prio.indexOf(p.id); return i<0 ? 1e6 : i; };
+  return base.map((p,i)=>({p:p,i:i})).sort((a,b)=>rank(a.p)-rank(b.p) || a.i-b.i).map(x=>x.p);
+}
 const inCamp = id => data.order.filter(c=>data.countries[c].camp===id).sort((a,b)=>data.countries[b].w-data.countries[a].w);
 const pctOf = codes => codes.reduce((s,c)=>s+data.countries[c].w,0)/TOTAL*100;
 const isQM = codes => codes.length>=15 && pctOf(codes)>=65;
@@ -774,10 +792,12 @@ function cardEl(code, param){
       '<span class="camp-badge camp-'+d.camp+'">'+esc(camps[d.camp])+'</span>'+
       '<span class="pop">'+d.w.toFixed(2)+' %</span></div>'+detail;
   } else {
-    const tags = visibleParams().filter(p=>d.pos[p.id]&&d.pos[p.id].stance).map(p=>{
+    const tags = prioOrder(code).filter(p=>d.pos[p.id]&&d.pos[p.id].stance).map(p=>{
       const v=d.pos[p.id]; const label=(v.label||'').trim()||tagText(p,v.stance);
       const s=(v.source||'').trim()?'<span class="src">✓</span>':'';
-      return '<span class="tag '+v.stance+'">'+esc(label)+s+'</span>';
+      const k=d.prio.indexOf(p.id);
+      const rk=k>=0?'<span class="rk">'+(k+1)+'</span>':'';
+      return '<span class="tag '+v.stance+'">'+rk+esc(label)+s+'</span>';
     }).join('');
     body = '<div class="card-top"><span class="flag">'+(FLAGS[code]||'')+'</span>'+
       '<span class="cname">'+esc(d.name)+'</span><span class="pop">'+d.w.toFixed(2)+' %</span></div>'+
@@ -849,10 +869,12 @@ function openCard(code){
   document.getElementById('mNote').value=d.note||'';
   document.getElementById('mCamp').innerHTML=CAMP_ORDER.map(id=>
     '<label><input type="radio" name="camp" value="'+id+'" '+(d.camp===id?'checked':'')+'><span>'+esc(camps[id])+'</span></label>').join('');
-  document.getElementById('mParams').innerHTML=params.map(p=>{
+  document.getElementById('mParams').innerHTML='<div class="prio-reset"><button type="button" class="btn ghost mini" id="prioReset">Réinitialiser l\'ordre</button></div>'+prioOrder(code, params).map(p=>{
     const v=d.pos[p.id]||{};
     return '<div class="param '+(v.stance?'active':'')+'" data-p="'+p.id+'">'+
-      '<div class="param-top"><span class="param-name">'+esc(p.name)+'</span><div class="stance">'+
+      '<div class="param-top"><span class="prio-rank"></span><span class="param-name">'+esc(p.name)+'</span>'+
+      '<span class="prio-tools"><button type="button" class="btn ghost mini" data-mv="-1" title="Plus prioritaire" aria-label="Monter">↑</button>'+
+      '<button type="button" class="btn ghost mini" data-mv="1" title="Moins prioritaire" aria-label="Descendre">↓</button></span><div class="stance">'+
         stanceCols(p).map(s=>'<label><input type="radio" name="st-'+p.id+'" value="'+s.id+'" '+(v.stance===s.id?'checked':'')+'>'+esc(s.label)+'</label>').join('')+
         '<label><input type="radio" name="st-'+p.id+'" value="" '+(!v.stance?'checked':'')+'>—</label></div></div>'+
       '<div class="param-detail">'+
@@ -866,6 +888,31 @@ function openCard(code){
       if(r.value){const p=params.find(x=>x.id===el.dataset.p); el.querySelector('.p-label').placeholder='Nom du tag (défaut : '+tagText(p,r.value)+')';}
     }));
   });
+  const box = document.getElementById('mParams');
+  const renumber = ()=>{
+    const els = box.querySelectorAll('.param');
+    els.forEach((el,i)=>{
+      el.querySelector('.prio-rank').textContent = (i+1)+'.';
+      el.querySelector('[data-mv="-1"]').disabled = i===0;
+      el.querySelector('[data-mv="1"]').disabled = i===els.length-1;
+    });
+  };
+  box.onclick = e=>{
+    const btn = e.target.closest('button');
+    if(!btn) return;
+    if(btn.id==='prioReset'){
+      const byId = {};
+      box.querySelectorAll('.param').forEach(el=>{ byId[el.dataset.p]=el; });
+      params.forEach(p=>{ if(byId[p.id]) box.appendChild(byId[p.id]); });
+      renumber(); return;
+    }
+    if(!btn.dataset.mv) return;
+    const el = btn.closest('.param');
+    if(btn.dataset.mv==='-1' && el.previousElementSibling && el.previousElementSibling.classList.contains('param')) box.insertBefore(el, el.previousElementSibling);
+    else if(btn.dataset.mv==='1' && el.nextElementSibling) box.insertBefore(el.nextElementSibling, el);
+    renumber();
+  };
+  renumber();
   modal.showModal();
 }
 
@@ -874,6 +921,11 @@ document.getElementById('mSave').addEventListener('click', async ()=>{
   d.camp=document.querySelector('#mCamp input:checked').value;
   d.note=document.getElementById('mNote').value;
   d.pos={}; const fields={Camp:camps[d.camp], Notes:d.note};
+  // Ordre de priorité : on ne stocke que s'il diffère de l'ordre global.
+  const ids = Array.from(document.querySelectorAll('#mParams .param')).map(el=>el.dataset.p);
+  const sameAsGlobal = ids.length===params.length && ids.every((id,i)=>id===params[i].id);
+  d.prio = sameAsGlobal ? [] : ids;
+  if(hasPrioCol) fields.Priorites = d.prio.join(',');
   document.querySelectorAll('#mParams .param').forEach(el=>{
     const p=params.find(x=>x.id===el.dataset.p);
     const st=el.querySelector('input[type=radio]:checked').value;
@@ -1115,6 +1167,17 @@ async function refresh(){
   if(TABLE){
     try{ records = columnarToRows(await grist.docApi.fetchTable(TABLE)); }
     catch(e){ /* on garde le flux si la lecture directe échoue */ }
+  }
+  hasPrioCol = records.length > 0 && Object.prototype.hasOwnProperty.call(records[0], 'Priorites');
+  if(!hasPrioCol && records.length && TABLE && !prioColTried){
+    prioColTried = true;   // une seule tentative : la création relance onRecords
+    try{
+      await applyActions([['AddColumn', TABLE, 'Priorites', {type:'Text', label:'Priorités'}]]);
+      await makeColumnsVisible(['Priorites']);
+      hasPrioCol = true;
+    }catch(e){
+      if(isAccessError(e)) canWrite = false;
+    }
   }
   fromRecords(records);
   renderChrome(); render(); showSetup();
