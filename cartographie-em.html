@@ -529,15 +529,20 @@ function autoCampFor(d, ps, W){
   const rest = ps.filter(p=>!(p.id in wmap));
   // sous-sujets non classés : parts égales du reste à attribuer pour atteindre 100 %
   if(rest.length){ const each = Math.max(0, 100-listed)/rest.length; rest.forEach(p=>{ wmap[p.id] = each; }); }
-  // Les pourcentages se lisent sur les seuls sous-sujets où le pays s'est exprimé (Favorable ou
-  // Défavorable) : les poids de ceux-là sont ramenés à 100 %. Ambiguë ou non renseigné = pas exprimé.
+  // Les pourcentages se lisent sur les seuls sous-sujets où le pays s'est exprimé : les poids de ceux-là
+  // sont ramenés à 100 %. Une position Ambiguë saisie explicitement est exprimée : elle compte pour moitié
+  // dans chaque camp (50 % vert, 50 % orange). Un sous-sujet vide, ou n'ayant qu'une source ou un tag, ne l'est pas.
   const stanceOf = p => d.pos[p.id] && d.pos[p.id].stance;
-  const ex = ps.filter(p=>stanceOf(p) === 'fav' || stanceOf(p) === 'def');
+  const spoken = p => { const st = stanceOf(p); return st === 'fav' || st === 'def' || (st === 'amb' && d.pos[p.id].explicit !== false); };
+  const ex = ps.filter(spoken);
   const total = ex.reduce((s,p)=>s+wmap[p.id], 0);
   if(!ex.length || total <= 0) return null;               // rien d'exprimé : le camp saisi est conservé
   const scale = 100/total;
   let g = 0, o = 0;
-  ex.forEach(p=>{ if(stanceOf(p) === 'fav') g += wmap[p.id]*scale; else o += wmap[p.id]*scale; });
+  ex.forEach(p=>{
+    const st = stanceOf(p), w = wmap[p.id]*scale;
+    if(st === 'fav') g += w; else if(st === 'def') o += w; else { g += w/2; o += w/2; }
+  });
   const camp = g >= AUTO_THRESHOLD-1e-9 ? 'reforme' : (o >= AUTO_THRESHOLD-1e-9 ? 'ets' : 'indecis');
   return {camp:camp, g:g, o:o, n:ex.length};
 }
@@ -668,7 +673,7 @@ function buildDataset(recs, n, allParams, campSrc){
       const st = STANCE_ID[norm(row[p.posCol])];
       const src = p.srcCol ? String(row[p.srcCol]||'').trim() : '';
       const tag = p.tagCol ? String(row[p.tagCol]||'').trim() : '';
-      if(st || src || tag) pos[p.id] = {stance: st||'amb', source: src, label: tag};
+      if(st || src || tag) pos[p.id] = {stance: st||'amb', explicit: !!st, source: src, label: tag};
     });
     // priorités : noms de sous-sujets séparés par des virgules, du plus au moins prioritaire.
     // Colonne « Priorites » de la table source du texte (seconde table pour le texte 2 si elle l'a).
@@ -915,7 +920,7 @@ function renderChrome(){
     'Jalons <b style="color:var(--reforme)">verts</b> : lus depuis la gauche, camp « '+esc(campName('reforme',1))+' » ('+esc(texts.t1)+') ou « '+esc(campName('reforme',2))+' » ('+esc(texts.t2)+'). ' +
     'Jalons <b style="color:var(--ets)">orange</b> : lus depuis la droite, camp « '+esc(campName('ets',1))+' » ou « '+esc(campName('ets',2))+' ». ' +
     'Minorité de blocage : 4 États membres et plus de 35 %. Majorité qualifiée : 15 États membres et 65 %.' +
-    [1,2].filter(n=>autoOn[n]).map(n=>' Camp calculé automatiquement sur '+esc(n===2?texts.t2:texts.t1)+' : accord pondéré par les priorités, sur les sous-sujets où le pays s\'est exprimé, ≥ '+AUTO_THRESHOLD+' %.').join('');
+    [1,2].filter(n=>autoOn[n]).map(n=>' Camp calculé automatiquement sur '+esc(n===2?texts.t2:texts.t1)+' : accord pondéré par les priorités, sur les sous-sujets où le pays s\'est exprimé (position ambiguë = 50 % de chaque camp), ≥ '+AUTO_THRESHOLD+' %.').join('');
   const vis = visibleParams();
   if(pFilterValue && !vis.some(p=>p.id===pFilterValue)) pFilterValue = '';
   buildPfMenu();
@@ -1235,8 +1240,8 @@ function renderPlane(){
       zones += '<div class="plane-zone zx-'+cx+both+'">'+codes.length+' · '+pctOf(codes,true).toFixed(1)+' %</div>';
     });
   });
-  const axisX = CAMP_ORDER.map(id=>'<span>'+esc(campName(id,1))+'</span>').join('');
-  const axisY = CAMP_ORDER.map(id=>'<span>'+esc(campName(id,2))+'</span>').join('');
+  const axisX = CAMP_ORDER.map(id=>'<span>'+esc(texts.t1+' - '+campName(id,1))+'</span>').join('');
+  const axisY = CAMP_ORDER.map(id=>'<span>'+esc(texts.t2+' - '+campName(id,2))+'</span>').join('');
   board.innerHTML = '<div class="plane-wrap">'+
     '<div class="plane-axis-y" title="'+esc(texts.t2)+'">'+axisY+'</div>'+
     '<div class="plane" id="plane"><div class="plane-grid">'+zones+'</div></div>'+
