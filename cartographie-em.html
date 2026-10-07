@@ -263,8 +263,8 @@
     <div class="pf-menu" id="pfMenu" role="listbox" hidden></div>
   </div>
   <span class="seg-btns" role="group" aria-label="Texte affiché">
-    <button class="btn ghost" id="btnT1" aria-pressed="true">ETS</button>
-    <button class="btn ghost" id="btnT2" aria-pressed="false" hidden>Texte 2</button>
+    <button class="btn ghost" id="btnT1" aria-pressed="true">CAFE</button>
+    <button class="btn ghost" id="btnT2" aria-pressed="false" hidden>IAA</button>
   </span>
   <button class="btn ghost" id="btnPlane" aria-pressed="false">Plan 2D</button>
   <button class="btn ghost" id="btnCompact" aria-pressed="false">Vue compacte</button>
@@ -302,8 +302,8 @@
     <div class="field">
       <span class="lab">Textes du plan 2D (axe horizontal · axe vertical)</span>
       <div class="cfg-poles">
-        <input id="cfgT1" placeholder="Texte 1 (défaut : ETS)">
-        <input id="cfgT2" placeholder="Texte 2 (défaut : Texte 2)">
+        <input id="cfgT1" placeholder="Texte 1 (défaut : CAFE)">
+        <input id="cfgT2" placeholder="Texte 2 (défaut : IAA)">
       </div>
       <span class="lab" style="margin-top:8px">Table Grist du texte 2 (même structure : Code, Pays, Poids, Camp, Xxx_Pos…)</span>
       <select id="cfgTable2" style="width:100%;padding:6px 8px;border:1px solid var(--rule);font-size:13px;font-family:var(--sans);background:#FBFBFC"></select>
@@ -370,7 +370,7 @@ let streamRecords = [];   // dernier flux onRecords (table liée uniquement)
 let canWrite = null;     // null = inconnu, true/false après essai
 let hasPrioCol = false;   // colonne « Priorites » présente (ordre de priorité par pays)
 let hasPlanCols = false;  // colonnes Camp2 / Plan_X / Plan_Y présentes (plan 2D)
-let texts = {t1:'ETS', t2:'Texte 2'};   // intitulés des deux textes du plan 2D
+let texts = {t1:'CAFE', t2:'IAA'};   // intitulés des deux textes du plan 2D
 let planeMode = false;
 
 const esc = s => String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -500,7 +500,7 @@ async function loadConfig(){
   camps = Object.assign({}, DEFAULT_CAMPS);
   CAMP_ORDER.forEach(id=>{ if(CFG['camp_'+id]) camps[id] = CFG['camp_'+id]; });
   title = CFG.titre || title;
-  texts = {t1: CFG.texte1 || 'ETS', t2: CFG.texte2 || 'Texte 2'};
+  texts = {t1: CFG.texte1 || 'CAFE', t2: CFG.texte2 || 'IAA'};
   TABLE2 = CFG.table2 || '';
 }
 // Les réglages des paramètres du texte 2 sont rangés sous le préfixe « t2. » pour ne pas
