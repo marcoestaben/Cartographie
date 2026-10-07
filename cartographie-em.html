@@ -529,16 +529,17 @@ function autoCampFor(d, ps, W){
   const rest = ps.filter(p=>!(p.id in wmap));
   // sous-sujets non classés : parts égales du reste à attribuer pour atteindre 100 %
   if(rest.length){ const each = Math.max(0, 100-listed)/rest.length; rest.forEach(p=>{ wmap[p.id] = each; }); }
-  const total = ps.reduce((s,p)=>s+wmap[p.id], 0);
-  const scale = total > 0 ? 100/total : 0;              // normalisation à 100 %
+  // Les pourcentages se lisent sur les seuls sous-sujets où le pays s'est exprimé (Favorable ou
+  // Défavorable) : les poids de ceux-là sont ramenés à 100 %. Ambiguë ou non renseigné = pas exprimé.
+  const stanceOf = p => d.pos[p.id] && d.pos[p.id].stance;
+  const ex = ps.filter(p=>stanceOf(p) === 'fav' || stanceOf(p) === 'def');
+  const total = ex.reduce((s,p)=>s+wmap[p.id], 0);
+  if(!ex.length || total <= 0) return null;               // rien d'exprimé : le camp saisi est conservé
+  const scale = 100/total;
   let g = 0, o = 0;
-  ps.forEach(p=>{
-    const st = d.pos[p.id] && d.pos[p.id].stance;
-    if(st === 'fav') g += wmap[p.id]*scale;
-    else if(st === 'def') o += wmap[p.id]*scale;      // ambiguë ou absente : aucun accord
-  });
+  ex.forEach(p=>{ if(stanceOf(p) === 'fav') g += wmap[p.id]*scale; else o += wmap[p.id]*scale; });
   const camp = g >= AUTO_THRESHOLD-1e-9 ? 'reforme' : (o >= AUTO_THRESHOLD-1e-9 ? 'ets' : 'indecis');
-  return {camp:camp, g:g, o:o};
+  return {camp:camp, g:g, o:o, n:ex.length};
 }
 
 /* Applique le calcul à tous les pays d'un texte (affichage seul : le camp saisi est gardé dans campManual). */
@@ -550,6 +551,7 @@ function applyAuto(ds){
     if(d.campManual === undefined) d.campManual = d.camp;
     const r = autoCampFor(d, ps, weightsBy[ds.n]);
     if(r){ d.camp = r.camp; d.autoScore = r; }
+    else { d.camp = d.campManual; d.autoScore = null; }     // rien d'exprimé : camp saisi conservé
   });
 }
 
@@ -913,7 +915,7 @@ function renderChrome(){
     'Jalons <b style="color:var(--reforme)">verts</b> : lus depuis la gauche, camp « '+esc(campName('reforme',1))+' » ('+esc(texts.t1)+') ou « '+esc(campName('reforme',2))+' » ('+esc(texts.t2)+'). ' +
     'Jalons <b style="color:var(--ets)">orange</b> : lus depuis la droite, camp « '+esc(campName('ets',1))+' » ou « '+esc(campName('ets',2))+' ». ' +
     'Minorité de blocage : 4 États membres et plus de 35 %. Majorité qualifiée : 15 États membres et 65 %.' +
-    [1,2].filter(n=>autoOn[n]).map(n=>' Camp calculé automatiquement sur '+esc(n===2?texts.t2:texts.t1)+' : accord pondéré par les priorités ≥ '+AUTO_THRESHOLD+' %.').join('');
+    [1,2].filter(n=>autoOn[n]).map(n=>' Camp calculé automatiquement sur '+esc(n===2?texts.t2:texts.t1)+' : accord pondéré par les priorités, sur les sous-sujets où le pays s\'est exprimé, ≥ '+AUTO_THRESHOLD+' %.').join('');
   const vis = visibleParams();
   if(pFilterValue && !vis.some(p=>p.id===pFilterValue)) pFilterValue = '';
   buildPfMenu();
@@ -1104,7 +1106,7 @@ function cardEl(code, param){
       (tags?'<div class="tags">'+tags+'</div>':'<div class="nopos">Aucune position renseignée</div>');
   }
   if(autoOn[active] && d.autoScore){
-    btn.title = 'Camp calculé — accord : ' + camps.reforme + ' ' + Math.round(d.autoScore.g) + ' % · ' + camps.ets + ' ' + Math.round(d.autoScore.o) + ' %';
+    btn.title = 'Camp calculé — accord : ' + camps.reforme + ' ' + Math.round(d.autoScore.g) + ' % · ' + camps.ets + ' ' + Math.round(d.autoScore.o) + ' % (sur ' + d.autoScore.n + ' sous-sujet' + (d.autoScore.n>1?'s':'') + ' exprimé' + (d.autoScore.n>1?'s':'') + ')';
   }
   btn.innerHTML = body;
   btn.addEventListener('click', ()=>openCard(code));
