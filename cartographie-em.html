@@ -308,7 +308,7 @@
       <span class="lab" style="margin-top:8px">Table Grist du texte 2 (même structure : Code, Pays, Poids, Camp, Xxx_Pos…)</span>
       <select id="cfgTable2" style="width:100%;padding:6px 8px;border:1px solid var(--rule);font-size:13px;font-family:var(--sans);background:#FBFBFC"></select>
     </div>
-    <div class="field"><span class="lab">Nom des camps</span><div id="cfgCamps"></div></div>
+    <div class="field"><span class="lab" id="cfgCampsLab">Nom des camps</span><div id="cfgCamps"></div></div>
     <div class="field">
       <span class="lab">Paramètres</span>
       <div id="cfgParams"></div>
@@ -335,7 +335,12 @@
    ========================================================================= */
 
 const CAMP_ORDER = ['reforme','indecis','ets'];
-const DEFAULT_CAMPS = {reforme:'Pro-réforme', indecis:'Indécis', ets:'Pro-statu quo'};
+// Chaque texte a ses deux camps (le camp central « Indécis » est commun).
+const DEFAULT_CAMPS_BY_TEXT = {
+  1: {reforme:'Pro-Electrification', indecis:'Indécis', ets:'Pro-Flexibilité'},
+  2: {reforme:'Pro-Souveraineté',    indecis:'Indécis', ets:'Pro-Libre Echange'}
+};
+const DEFAULT_CAMPS = DEFAULT_CAMPS_BY_TEXT[1];
 const STANCES = [{id:'fav',label:'Favorable'},{id:'amb',label:'Ambiguë'},{id:'def',label:'Défavorable'}];
 const STANCE_LABEL = {fav:'Favorable', amb:'Ambiguë', def:'Défavorable'};
 const POSITIONS = ['Favorable','Ambiguë','Défavorable'];
@@ -351,7 +356,9 @@ const DEFAULT_PARAMS = [
 
 const FLAGS = {FR:'🇫🇷',DE:'🇩🇪',IT:'🇮🇹',ES:'🇪🇸',PL:'🇵🇱',RO:'🇷🇴',NL:'🇳🇱',BE:'🇧🇪',CZ:'🇨🇿',SE:'🇸🇪',PT:'🇵🇹',EL:'🇬🇷',HU:'🇭🇺',AT:'🇦🇹',BG:'🇧🇬',DK:'🇩🇰',FI:'🇫🇮',SK:'🇸🇰',IE:'🇮🇪',HR:'🇭🇷',LT:'🇱🇹',SI:'🇸🇮',LV:'🇱🇻',EE:'🇪🇪',CY:'🇨🇾',LU:'🇱🇺',MT:'🇲🇹'};
 
-let camps = Object.assign({}, DEFAULT_CAMPS);
+let campsByText = {1:Object.assign({}, DEFAULT_CAMPS_BY_TEXT[1]), 2:Object.assign({}, DEFAULT_CAMPS_BY_TEXT[2])};
+let camps = campsByText[1];   // noms des camps du texte ACTIF
+const campName = (id, n) => campsByText[n || active][id];
 let params = [];          // [{id, col, name, phrase, posCol, srcCol, tagCol}]
 let title = 'Cartographie des positions';
 let data = {countries:{}, order:[]};
@@ -503,8 +510,13 @@ async function loadConfig(){
     const o = await grist.getOptions();
     if(o && o.cfg) Object.keys(o.cfg).forEach(k=>{ CFG[k] = String(o.cfg[k]==null?'':o.cfg[k]); });
   }catch(e){}
-  camps = Object.assign({}, DEFAULT_CAMPS);
-  CAMP_ORDER.forEach(id=>{ if(CFG['camp_'+id]) camps[id] = CFG['camp_'+id]; });
+  [1,2].forEach(n=>{
+    campsByText[n] = Object.assign({}, DEFAULT_CAMPS_BY_TEXT[n]);
+    // les anciens libellés par défaut mémorisés sont ignorés : les nouveaux noms par texte s'appliquent
+    const OLD = {reforme:'Pro-réforme', ets:'Pro-statu quo'};
+    CAMP_ORDER.forEach(id=>{ const v = CFG[cfgPrefix(n)+'camp_'+id]; if(v && v !== OLD[id]) campsByText[n][id] = v; });
+  });
+  camps = campsByText[active];
   title = CFG.titre || title;
   texts = {t1: CFG.texte1 || 'CAFE', t2: CFG.texte2 || 'IAA'};
   TABLE2 = CFG.table2 || '';
@@ -543,13 +555,20 @@ function deriveParams(rec, pfx){
   })).sort((a,b)=> a.ordre - b.ordre || a.name.localeCompare(b.name,'fr'));
 }
 
+/* Table de reconnaissance des libellés de camp d'un texte. Les libellés diffèrent d'un texte
+   à l'autre ; les anciens libellés (« Pro-réforme », « Pro-statu quo ») restent reconnus. */
+function campInFor(t){
+  const m = {};
+  CAMP_ORDER.forEach(id=>{ m[norm(campsByText[t][id])] = id; m[norm(id)] = id; });
+  m['pro-reforme']='reforme'; m['indecis']='indecis'; m['pro-statu quo']='ets'; m['pro-ets']='ets';
+  return m;
+}
+
 /* Construit le jeu de données d'un texte à partir des lignes de sa table. */
 function buildDataset(records, n, tableId){
   const recs = records || [];
   const params = recs.length ? deriveParams(recs[0], cfgPrefix(n)) : [];
-  const campIn = {};
-  CAMP_ORDER.forEach(id=>{ campIn[norm(camps[id])] = id; campIn[norm(id)] = id; });
-  campIn['pro-reforme']='reforme'; campIn['indecis']='indecis'; campIn['pro-statu quo']='ets'; campIn['pro-ets']='ets';
+  const campIn = campInFor(n), campIn2 = campInFor(2);
   const c = {}, order = []; let tot = 0;
   recs.forEach(r=>{
     const code = String(r.Code||'').trim();
@@ -565,7 +584,7 @@ function buildDataset(records, n, tableId){
       .filter((id,i,a)=>id && a.indexOf(id)===i && params.some(p=>p.id===id));
     c[code] = {rowId:r.id, name:r.Pays||code, w:Number(r.Poids)||0,
                camp: campIn[norm(r.Camp)] || 'indecis', note:r.Notes||'', pos:pos, prio:prio,
-               camp2: campIn[norm(r.Camp2)] || 'indecis',
+               camp2: campIn2[norm(r.Camp2)] || 'indecis',
                x: typeof r.Plan_X==='number' ? r.Plan_X : null,
                y: typeof r.Plan_Y==='number' ? r.Plan_Y : null};
     order.push(code); tot += Number(r.Poids)||0;
@@ -580,6 +599,7 @@ function useDataset(n){
   const d = DS[n];
   lastRecords = d.records; params = d.params; data = d.data; TOTAL = d.total; TABLE = d.table;
   hasPrioCol = !!d.hasPrio;
+  camps = campsByText[n];
 }
 
 const pushRow = (code, fields) => pushRowTo(active, code, fields);
@@ -658,7 +678,7 @@ async function writeConfig(paramList, campList, newTitle, newTexts, newTable2){
   entries.texte1 = tx.t1; entries.texte2 = tx.t2;
   entries.table2 = newTable2 === undefined ? TABLE2 : newTable2;
   const pfx = cfgPrefix();   // les paramètres écrits sont ceux du texte actif
-  CAMP_ORDER.forEach(id=>{ entries['camp_'+id] = campList[id]; });
+  CAMP_ORDER.forEach(id=>{ entries[pfx+'camp_'+id] = campList[id]; });
   paramList.forEach((p,i)=>{
     entries[pfx+'param.'+p.col+'.nom'] = p.name;
     entries[pfx+'param.'+p.col+'.fav'] = p.favLabel || '';
@@ -700,8 +720,8 @@ function setCamp2Local(code, camp){
 }
 /* Écriture du camp 2 dans la bonne table. */
 async function pushCamp2(code, camp){
-  if(DS[2]){ if(DS[2].data.countries[code]) await pushRowTo(2, code, {Camp:camps[camp]}); }
-  else if(hasPlanCols) await pushRowTo(1, code, {Camp2:camps[camp]});
+  if(DS[2]){ if(DS[2].data.countries[code]) await pushRowTo(2, code, {Camp:campName(camp,2)}); }
+  else if(hasPlanCols) await pushRowTo(1, code, {Camp2:campName(camp,2)});
 }
 
 /* axis non précisé : camp dans le texte ACTIF (vue 1D) ; 1 / 2 : camp sur le texte 1 / 2 (croisement). */
@@ -749,8 +769,8 @@ function renderChrome(){
   document.getElementById('btnT1').textContent = texts.t1;
   document.getElementById('btnT2').textContent = texts.t2;
   document.getElementById('legend').innerHTML =
-    'Jalons <b style="color:var(--reforme)">bleus</b> : lus depuis la gauche, camp « '+esc(camps.reforme)+' ». ' +
-    'Jalons <b style="color:var(--ets)">verts</b> : lus depuis la droite, camp « '+esc(camps.ets)+' ». ' +
+    'Jalons <b style="color:var(--reforme)">bleus</b> : lus depuis la gauche, camp « '+esc(campName('reforme',1))+' » ('+esc(texts.t1)+') ou « '+esc(campName('reforme',2))+' » ('+esc(texts.t2)+'). ' +
+    'Jalons <b style="color:var(--ets)">verts</b> : lus depuis la droite, camp « '+esc(campName('ets',1))+' » ou « '+esc(campName('ets',2))+' ». ' +
     'Minorité de blocage : 4 États membres et plus de 35 %. Majorité qualifiée : 15 États membres et 65 %.';
   const vis = visibleParams();
   if(pFilterValue && !vis.some(p=>p.id===pFilterValue)) pFilterValue = '';
@@ -1012,8 +1032,8 @@ function councilBlock(axis, name){
   const seg=(cls,codes)=>{ const p=pctOf(codes,true); return '<div class="seg '+cls+'" style="flex-basis:'+p+'%">'+(p>7?p.toFixed(0)+' %':'')+'</div>'; };
   const flags = ['reforme','ets'].map(id=>{
     const own = id==='reforme'?R:E, withI = own.concat(I);
-    return cflag(esc(camps[id])+' : majorité qualifiée', isQM(own,true), isQM(withI,true)) +
-           cflag(esc(camps[id])+' : minorité de blocage', isMB(own,true), isMB(withI,true));
+    return cflag(esc(campName(id,axis))+' : majorité qualifiée', isQM(own,true), isQM(withI,true)) +
+           cflag(esc(campName(id,axis))+' : minorité de blocage', isMB(own,true), isMB(withI,true));
   }).join('');
   return '<div class="c-block"><div class="c-name">'+esc(name)+'</div>'+
     '<div class="thresh top"><span style="left:35%">35 % · minorité de blocage</span><span style="left:65%">65 % · majorité qualifiée</span></div>'+
@@ -1031,8 +1051,9 @@ function councilCross(){
     const bothMaybe = order.filter(c=>campOf(c,1)!==other && campOf(c,2)!==other);
     const blk = a => isMB(inCamp(id,a), true);
     const blkMaybe = a => isMB(inCamp(id,a).concat(inCamp('indecis',a)), true);
-    return cflag(esc(camps[id])+' : majorité qualifiée sur les deux textes', isQM(both,true), isQM(bothMaybe,true)) +
-           cflag(esc(camps[id])+' : blocage sur au moins un texte', blk(1)||blk(2), blkMaybe(1)||blkMaybe(2));
+    const lab = esc(campName(id,1))+' + '+esc(campName(id,2));
+    return cflag(lab+' : majorité qualifiée sur les deux textes', isQM(both,true), isQM(bothMaybe,true)) +
+           cflag(lab+' : blocage sur au moins un texte', blk(1)||blk(2), blkMaybe(1)||blkMaybe(2));
   }).join('');
   return '<div class="c-cross"><div class="c-name">Croisement « '+esc(texts.t1)+' » × « '+esc(texts.t2)+' »</div>'+
     '<div class="c-cross-flags">'+flags+'</div></div>';
@@ -1056,8 +1077,8 @@ function renderPlane(){
       zones += '<div class="plane-zone zx-'+cx+both+'">'+codes.length+' · '+pctOf(codes,true).toFixed(1)+' %</div>';
     });
   });
-  const axisX = CAMP_ORDER.map(id=>'<span>'+esc(camps[id])+'</span>').join('');
-  const axisY = CAMP_ORDER.map(id=>'<span>'+esc(camps[id])+'</span>').join('');
+  const axisX = CAMP_ORDER.map(id=>'<span>'+esc(campName(id,1))+'</span>').join('');
+  const axisY = CAMP_ORDER.map(id=>'<span>'+esc(campName(id,2))+'</span>').join('');
   board.innerHTML = '<div class="plane-wrap">'+
     '<div class="plane-axis-y" title="'+esc(texts.t2)+'">'+axisY+'</div>'+
     '<div class="plane" id="plane"><div class="plane-grid">'+zones+'</div></div>'+
@@ -1070,7 +1091,7 @@ function renderPlane(){
     dot.className = 'dot'; dot.dataset.code = code;
     const cp = clampInPlane(plane, size, pt.x, pt.y);
     dot.style.cssText = 'left:'+cp.x+'%;bottom:'+cp.y+'%;width:'+size+'px;height:'+size+'px';
-    dot.title = d.name+' — '+d.w.toFixed(2)+' % · '+texts.t1+' : '+camps[d.camp]+' · '+texts.t2+' : '+camps[camp2Of(code)];
+    dot.title = d.name+' — '+d.w.toFixed(2)+' % · '+texts.t1+' : '+campName(d.camp,1)+' · '+texts.t2+' : '+campName(camp2Of(code),2);
     dot.innerHTML = '<span class="flag">'+(FLAGS[code]||'')+'</span><span class="dc">'+esc(code)+'</span>';
     wireDot(dot, plane, code);
     plane.appendChild(dot);
@@ -1102,7 +1123,7 @@ function wireDot(dot, plane, code){
     d.camp = zoneOf(d.x);
     const c2 = zoneOf(d.y); setCamp2Local(code, c2);
     render();
-    await pushRowTo(1, code, {Plan_X:d.x, Plan_Y:d.y, Camp:camps[d.camp]});
+    await pushRowTo(1, code, {Plan_X:d.x, Plan_Y:d.y, Camp:campName(d.camp,1)});
     await pushCamp2(code, c2);
   });
   dot.addEventListener('pointercancel', ()=>{ dot.classList.remove('dragging'); render(); });
@@ -1124,7 +1145,7 @@ function openCard(code){
   document.getElementById('mCamp2Lab').textContent = 'Camp — ' + texts.t2;
   document.getElementById('mCamp2').parentElement.style.display = showC2 ? '' : 'none';
   document.getElementById('mCamp2').innerHTML=!showC2 ? '' : CAMP_ORDER.map(id=>
-    '<label><input type="radio" name="camp2" value="'+id+'" '+(camp2Of(current)===id?'checked':'')+'><span>'+esc(camps[id])+'</span></label>').join('');
+    '<label><input type="radio" name="camp2" value="'+id+'" '+(camp2Of(current)===id?'checked':'')+'><span>'+esc(campName(id,2))+'</span></label>').join('');
   document.getElementById('mParams').innerHTML='<div class="prio-reset"><button type="button" class="btn ghost mini" id="prioReset">Réinitialiser l\'ordre</button></div>'+prioOrder(code, params).map(p=>{
     const v=d.pos[p.id]||{};
     return '<div class="param '+(v.stance?'active':'')+'" data-p="'+p.id+'">'+
@@ -1253,6 +1274,7 @@ let draft = null;
 
 function cfgRender(){
   document.getElementById('cfgTitle').value = draft.title;
+  document.getElementById('cfgCampsLab').textContent = 'Nom des camps — ' + (active===2 ? draft.texts.t2 : draft.texts.t1);
   document.getElementById('cfgT1').value = draft.texts.t1;
   document.getElementById('cfgT2').value = draft.texts.t2;
   document.getElementById('cfgIntro').innerHTML =
@@ -1404,19 +1426,12 @@ document.getElementById('cfgSave').addEventListener('click', async ()=>{
     const renamed = CAMP_ORDER.filter(id=>draft.camps[id] !== camps[id]);
     if(renamed.length){
       const choices = JSON.stringify({choices: CAMP_ORDER.map(id=>draft.camps[id])});
-      // les noms de camps sont communs aux deux textes : on met à jour les deux tables
-      [1,2].filter(n=>DS[n]).forEach(n=>{
-        const t = DS[n].table, withCamp2 = n===1 && hasPlanCols;
-        actions.push(['ModifyColumn', t, 'Camp', {widgetOptions: choices}]);
-        if(withCamp2) actions.push(['ModifyColumn', t, 'Camp2', {widgetOptions: choices}]);
-        DS[n].records.forEach(r=>{
-          const f = {};
-          const hit = renamed.find(id=>camps[id] === String(r.Camp||'').trim());
-          if(hit) f.Camp = draft.camps[hit];
-          const hit2 = withCamp2 && renamed.find(id=>camps[id] === String(r.Camp2||'').trim());
-          if(hit2) f.Camp2 = draft.camps[hit2];
-          if(Object.keys(f).length) actions.push(['UpdateRecord', t, r.id, f]);
-        });
+      // les noms de camps sont propres à chaque texte : seule la table du texte actif est concernée
+      const t = DS[active].table;
+      actions.push(['ModifyColumn', t, 'Camp', {widgetOptions: choices}]);
+      DS[active].records.forEach(r=>{
+        const hit = renamed.find(id=>camps[id] === String(r.Camp||'').trim());
+        if(hit) actions.push(['UpdateRecord', t, r.id, {Camp: draft.camps[hit]}]);
       });
     }
     if(actions.length) await applyActions(actions);
@@ -1448,7 +1463,7 @@ document.getElementById('cfgSave').addEventListener('click', async ()=>{
         ? newParams.length+' paramètre(s) ajouté(s) : colonnes créées'+visNote
         : 'Configuration appliquée dans Grist');
     }catch(e2){
-      camps = Object.assign({}, draft.camps); title = draft.title; texts = Object.assign({}, draft.texts);
+      campsByText[active] = Object.assign({}, draft.camps); camps = campsByText[active]; title = draft.title; texts = Object.assign({}, draft.texts);
       grStatus('Colonnes et camps mis à jour, mais les options du widget n\'ont pas pu être écrites : '+errText(e2), true);
     }
     cfgModal.close();
@@ -1463,7 +1478,7 @@ document.getElementById('cfgSave').addEventListener('click', async ()=>{
 // Colonnes ajoutées au-delà du schéma de base : créées automatiquement si absentes.
 const EXTRA_COLS = {
   Priorites: ()=>({type:'Text', label:'Priorités'}),
-  Camp2:     ()=>({type:'Choice', label:'Camp — texte 2', widgetOptions: JSON.stringify({choices: CAMP_ORDER.map(id=>camps[id])})}),
+  Camp2:     ()=>({type:'Choice', label:'Camp — texte 2', widgetOptions: JSON.stringify({choices: CAMP_ORDER.map(id=>campsByText[2][id])})}),
   Plan_X:    ()=>({type:'Numeric', label:'Plan X'}),
   Plan_Y:    ()=>({type:'Numeric', label:'Plan Y'})
 };
@@ -1504,10 +1519,31 @@ async function refresh(){
   DS[1] = buildDataset(rec1, 1, TABLE1); DS[1].hasPrio = has(rec1,'Priorites');
   DS[2] = rec2 ? buildDataset(rec2, 2, TABLE2) : null;
   if(DS[2]) DS[2].hasPrio = has(rec2,'Priorites');
+  await migrateCampValues(1); await migrateCampValues(2);
   if(TABLE2 && !rec2) grStatus('Table du texte 2 « '+TABLE2+' » introuvable : vérifiez « Configurer ».', true);
   useDataset(DS[active] ? active : 1);
   renderChrome(); render(); showSetup();
   if(params.length && !(TABLE2 && !rec2)) grStatus(data.order.length + ' États membres · ' + params.length + ' paramètres');
+}
+
+/* Aligne, une fois par session, les valeurs de la colonne Camp sur les noms de camps du texte
+   (ex. « Pro-réforme » → « Pro-Electrification »). Seules les valeurs reconnues sont réécrites ;
+   les cellules vides ou inconnues ne sont pas touchées. */
+const campMigrated = {};
+async function migrateCampValues(n){
+  const ds = DS[n];
+  if(!ds || campMigrated[n] || canWrite === false) return;
+  campMigrated[n] = true;
+  const inMap = campInFor(n), actions = [];
+  ds.records.forEach(r=>{
+    const raw = String(r.Camp==null ? '' : r.Camp).trim();
+    const id = raw ? inMap[norm(raw)] : null;
+    if(id && raw !== campsByText[n][id]) actions.push(['UpdateRecord', ds.table, r.id, {Camp: campsByText[n][id]}]);
+  });
+  if(!actions.length) return;
+  actions.unshift(['ModifyColumn', ds.table, 'Camp', {widgetOptions: JSON.stringify({choices: CAMP_ORDER.map(id=>campsByText[n][id])})}]);
+  try{ await applyActions(actions); }
+  catch(e){ if(isAccessError(e)) canWrite = false; }
 }
 
 /* Crée les colonnes manquantes d'une table (une seule tentative par table : la création relance onRecords). */
