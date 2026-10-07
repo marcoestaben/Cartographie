@@ -555,7 +555,9 @@ function applyAuto(ds){
 
 // Enregistre des clés de réglages dans les options du widget (fusion avec l'existant).
 async function saveCfg(entries){
-  await saveCfg(entries);
+  const cfg = Object.assign({}, CFG, entries);
+  await grist.setOptions({cfg: cfg});
+  CFG = cfg;
 }
 
 async function loadConfig(){
@@ -806,9 +808,7 @@ async function writeConfig(paramList, campList, newTitle, newTexts, newTable2, n
     entries['param.'+p.col+'.texte'] = String(t);
     entries['param.'+p.col+'.ordre'] = String(++seen[t]);
   });
-  const cfg = Object.assign({}, CFG, entries);
-  await grist.setOptions({cfg: cfg});
-  CFG = cfg;
+  await saveCfg(entries);
 }
 
 /* ---------- Rendu ---------- */
