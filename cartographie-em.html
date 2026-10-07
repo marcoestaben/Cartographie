@@ -166,6 +166,15 @@
   .plane-zone.zx-reforme{background:var(--reforme-bg)} .plane-zone.zx-indecis{background:var(--indecis-bg)} .plane-zone.zx-ets{background:var(--ets-bg)}
   .plane-zone.both-reforme{box-shadow:inset 0 0 0 2px var(--reforme)}
   .plane-zone.both-ets{box-shadow:inset 0 0 0 2px var(--ets)}
+  .cfg-auto{border:1px solid var(--rule);border-radius:var(--radius-xs);padding:8px 10px;margin-bottom:8px;background:#FBFBFC}
+  .cfg-auto .a-on{display:flex;gap:8px;align-items:center;font-size:12.5px;color:var(--ink)}
+  .cfg-weights{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 4px}
+  .cfg-wtable{border-collapse:collapse;font-size:12.5px;color:var(--ink-2)}
+  .cfg-wtable th{font-size:10.5px;font-weight:600;text-align:left;color:var(--ink-3);padding:2px 10px 4px 0;border-bottom:1px solid var(--rule)}
+  .cfg-wtable td{padding:3px 10px 3px 0}
+  .cfg-weights input{width:64px;padding:5px 7px;border:1px solid var(--rule);font-size:12.5px;font-family:var(--sans);background:var(--paper)}
+  .a-sum{font-size:11px;color:var(--ink-3)}
+  .a-sum.warn{color:#B34000;font-weight:600}
   .seg-btns{display:inline-flex;gap:0}
   .seg-btns .btn{border-radius:0}
   .seg-btns .btn:first-child{border-radius:var(--radius-xs) 0 0 var(--radius-xs)}
@@ -267,6 +276,10 @@
     <button class="btn ghost" id="btnT2" aria-pressed="false">IAA</button>
   </span>
   <button class="btn ghost" id="btnPlane" aria-pressed="false">Plan 2D</button>
+  <span class="seg-btns" role="group" aria-label="Camp automatique">
+    <button class="btn ghost" id="btnAuto1" aria-pressed="false">Auto CAFE</button>
+    <button class="btn ghost" id="btnAuto2" aria-pressed="false">Auto IAA</button>
+  </span>
   <button class="btn ghost" id="btnCompact" aria-pressed="false">Vue compacte</button>
   <button class="btn ghost" id="btnCfg">Configurer</button>
   <span class="file-state" id="grStatus">Connexion à Grist…</span>
@@ -309,6 +322,7 @@
       <select id="cfgTable2" style="width:100%;padding:6px 8px;border:1px solid var(--rule);font-size:13px;font-family:var(--sans);background:#FBFBFC"></select>
     </div>
     <div class="field"><span class="lab" id="cfgCampsLab">Nom des camps</span><div id="cfgCamps"></div></div>
+    <div class="field"><span class="lab">Camp automatique (par texte)</span><div id="cfgAuto"></div></div>
     <div class="field">
       <span class="lab">Sous-sujets (positions par texte)</span>
       <div id="cfgParams"></div>
@@ -495,6 +509,55 @@ async function makeColumnsVisible(colIds, tableId){
   }
 }
 
+/* ---------- Camp automatique ---------- */
+const AUTO_THRESHOLD = 80;           // % d'accord pour basculer dans un camp
+let autoOn = {1:false, 2:false};     // interrupteur par texte
+let weightsBy = {1:[], 2:[]};        // poids (%) par rang de priorité, par texte
+const parseWeights = str => String(str||'').split(',').map(s=>s.trim()).filter(s=>s!=='')
+  .map(Number).filter(v=>isFinite(v) && v>=0);
+
+/* Camp déduit des positions et des priorités d'un pays (règle : accord pondéré >= seuil).
+   ps = sous-sujets du texte (hors masqués), W = poids par rang. Renvoie null s'il n'y a aucun sous-sujet. */
+function autoCampFor(d, ps, W){
+  const k = ps.length;
+  if(!k) return null;
+  if(!W || !W.length) W = Array(k).fill(100/k);          // poids égaux par défaut
+  const ranked = d.prio.filter(id=>ps.some(p=>p.id===id)).slice(0, Math.min(W.length, k));
+  const wmap = {};
+  ranked.forEach((id,i)=>{ wmap[id] = W[i]; });
+  const listed = ranked.reduce((s,id)=>s+wmap[id], 0);
+  const rest = ps.filter(p=>!(p.id in wmap));
+  // sous-sujets non classés : parts égales du reste à attribuer pour atteindre 100 %
+  if(rest.length){ const each = Math.max(0, 100-listed)/rest.length; rest.forEach(p=>{ wmap[p.id] = each; }); }
+  const total = ps.reduce((s,p)=>s+wmap[p.id], 0);
+  const scale = total > 0 ? 100/total : 0;              // normalisation à 100 %
+  let g = 0, o = 0;
+  ps.forEach(p=>{
+    const st = d.pos[p.id] && d.pos[p.id].stance;
+    if(st === 'fav') g += wmap[p.id]*scale;
+    else if(st === 'def') o += wmap[p.id]*scale;      // ambiguë ou absente : aucun accord
+  });
+  const camp = g >= AUTO_THRESHOLD-1e-9 ? 'reforme' : (o >= AUTO_THRESHOLD-1e-9 ? 'ets' : 'indecis');
+  return {camp:camp, g:g, o:o};
+}
+
+/* Applique le calcul à tous les pays d'un texte (affichage seul : le camp saisi est gardé dans campManual). */
+function applyAuto(ds){
+  if(!ds || !autoOn[ds.n]) return;
+  const ps = ds.params.filter(p=>!p.hidden);
+  ds.data.order.forEach(code=>{
+    const d = ds.data.countries[code];
+    if(d.campManual === undefined) d.campManual = d.camp;
+    const r = autoCampFor(d, ps, weightsBy[ds.n]);
+    if(r){ d.camp = r.camp; d.autoScore = r; }
+  });
+}
+
+// Enregistre des clés de réglages dans les options du widget (fusion avec l'existant).
+async function saveCfg(entries){
+  await saveCfg(entries);
+}
+
 async function loadConfig(){
   CFG = {};
   // Ancienne table « Config » (si elle existe encore) : lue pour reprendre les réglages
@@ -522,6 +585,8 @@ async function loadConfig(){
   title = CFG.titre || title;
   texts = {t1: CFG.texte1 || 'CAFE', t2: CFG.texte2 || 'IAA'};
   TABLE2 = CFG.table2 || '';
+  autoOn = {1: CFG['auto.1'] === '1', 2: CFG['auto.2'] === '1'};
+  weightsBy = {1: parseWeights(CFG['poids.1']), 2: parseWeights(CFG['poids.2'])};
 }
 // Les réglages des paramètres du texte 2 sont rangés sous le préfixe « t2. » pour ne pas
 // entrer en collision avec ceux du texte 1 (les deux tables peuvent avoir les mêmes colonnes).
@@ -720,11 +785,14 @@ async function repairSchema(){
 /* Les réglages (titres, noms des camps, table du texte 2, libellés des paramètres) sont
    rangés dans les options du widget, enregistrées dans le document Grist : aucune table
    supplémentaire n'est créée. */
-async function writeConfig(paramList, campList, newTitle, newTexts, newTable2){
+async function writeConfig(paramList, campList, newTitle, newTexts, newTable2, newAuto){
   const entries = {titre: newTitle};
   const tx = newTexts || texts;
   entries.texte1 = tx.t1; entries.texte2 = tx.t2;
   entries.table2 = newTable2 === undefined ? TABLE2 : newTable2;
+  if(newAuto){
+    [1,2].forEach(n=>{ entries['auto.'+n] = newAuto.on[n] ? '1' : ''; entries['poids.'+n] = (newAuto.weights[n]||[]).join(','); });
+  }
   const pfx = cfgPrefix();   // les noms de camps écrits sont ceux du texte actif
   CAMP_ORDER.forEach(id=>{ entries[pfx+'camp_'+id] = campList[id]; });
   // sous-sujets : réglages communs, chacun rattaché à son texte ; l'ordre est propre à chaque texte
@@ -805,10 +873,25 @@ function jitter(code, k){
   let h = k; for(let i=0;i<code.length;i++) h = (h*31 + code.charCodeAt(i)) % 1000;
   return (h/1000 - .5) * 16;
 }
+/* Taux de conviction -> coordonnée (0-100) sur un axe : le pays s'éloigne du centre vers le camp
+   dont il partage le plus les positions. L'échelle est brisée au seuil d'accord (80 %) pour qu'il
+   coïncide avec la frontière de zone (tiers) : 0 % d'accord = centre, 80 % = bord de la zone du camp,
+   100 % = bord du cadre. Camp 1 vers 0, camp 2 vers 100. */
+function convictionPos(sc){
+  const a = Math.max(sc.g, sc.o);
+  if(a <= 0 || sc.g === sc.o) return 50;
+  const off = a < AUTO_THRESHOLD ? a/AUTO_THRESHOLD*(100/6) : 16.8 + (a-AUTO_THRESHOLD)/(100-AUTO_THRESHOLD)*(50-16.8);
+  return sc.g > sc.o ? 50 - off : 50 + off;
+}
+
 function coordOf(code){
   const d = baseData().countries[code], c2 = camp2Of(code);
-  const x = (d.x!=null && zoneOf(d.x)===d.camp) ? d.x : ZONE_CENTER[d.camp] + jitter(code, 7);
-  const y = (d.y!=null && zoneOf(d.y)===c2)     ? d.y : ZONE_CENTER[c2]     + jitter(code, 13);
+  let x = (d.x!=null && zoneOf(d.x)===d.camp) ? d.x : ZONE_CENTER[d.camp] + jitter(code, 7);
+  let y = (d.y!=null && zoneOf(d.y)===c2)     ? d.y : ZONE_CENTER[c2]     + jitter(code, 13);
+  // camp automatique : la position vient du taux de conviction (calcul), pas de la saisie
+  const dd2 = DS[2].data.countries[code];
+  if(autoOn[1] && d.autoScore) x = convictionPos(d.autoScore);
+  if(autoOn[2] && dd2 && dd2.autoScore) y = convictionPos(dd2.autoScore);
   return {x:x, y:y};
 }
 const clamp100 = v => Math.max(0, Math.min(100, v));
@@ -824,10 +907,13 @@ function renderChrome(){
   document.getElementById('title').textContent = title;
   document.getElementById('btnT1').textContent = texts.t1;
   document.getElementById('btnT2').textContent = texts.t2;
+  document.getElementById('btnAuto1').textContent = 'Auto ' + texts.t1;
+  document.getElementById('btnAuto2').textContent = 'Auto ' + texts.t2;
   document.getElementById('legend').innerHTML =
     'Jalons <b style="color:var(--reforme)">verts</b> : lus depuis la gauche, camp « '+esc(campName('reforme',1))+' » ('+esc(texts.t1)+') ou « '+esc(campName('reforme',2))+' » ('+esc(texts.t2)+'). ' +
     'Jalons <b style="color:var(--ets)">orange</b> : lus depuis la droite, camp « '+esc(campName('ets',1))+' » ou « '+esc(campName('ets',2))+' ». ' +
-    'Minorité de blocage : 4 États membres et plus de 35 %. Majorité qualifiée : 15 États membres et 65 %.';
+    'Minorité de blocage : 4 États membres et plus de 35 %. Majorité qualifiée : 15 États membres et 65 %.' +
+    [1,2].filter(n=>autoOn[n]).map(n=>' Camp calculé automatiquement sur '+esc(n===2?texts.t2:texts.t1)+' : accord pondéré par les priorités ≥ '+AUTO_THRESHOLD+' %.').join('');
   const vis = visibleParams();
   if(pFilterValue && !vis.some(p=>p.id===pFilterValue)) pFilterValue = '';
   buildPfMenu();
@@ -890,6 +976,13 @@ function stanceOf(code, p){
 let compact = false;
 
 function render(){
+  // camp automatique : recalculé à chaque rendu à partir des positions, priorités et poids
+  [1,2].forEach(n=>applyAuto(DS[n]));
+  [1,2].forEach(n=>{
+    const b = document.getElementById('btnAuto'+n);
+    b.setAttribute('aria-pressed', autoOn[n] ? 'true' : 'false');
+    b.title = 'Camp calculé automatiquement sur ' + (n===2 ? texts.t2 : texts.t1) + ' (accord pondéré par les priorités >= ' + AUTO_THRESHOLD + ' %) — taux de conviction visible sur le plan 2D';
+  });
   const fp = pFilterValue;
   const p = (fp && !planeMode) ? visibleParams().find(x=>x.id===fp) : null;
   document.body.classList.toggle('view-stance', !!p);
@@ -1010,6 +1103,9 @@ function cardEl(code, param){
       '<span class="cname">'+esc(d.name)+'</span><span class="pop">'+d.w.toFixed(2)+' %</span></div>'+
       (tags?'<div class="tags">'+tags+'</div>':'<div class="nopos">Aucune position renseignée</div>');
   }
+  if(autoOn[active] && d.autoScore){
+    btn.title = 'Camp calculé — accord : ' + camps.reforme + ' ' + Math.round(d.autoScore.g) + ' % · ' + camps.ets + ' ' + Math.round(d.autoScore.o) + ' %';
+  }
   btn.innerHTML = body;
   btn.addEventListener('click', ()=>openCard(code));
   btn.addEventListener('dragstart', e=>{e.dataTransfer.setData('text/plain',code);btn.classList.add('dragging');});
@@ -1024,6 +1120,10 @@ function wireDrop(drop){
     e.preventDefault(); drop.classList.remove('over');
     const code=e.dataTransfer.getData('text/plain'); const camp=drop.dataset.camp;
     if(!code||!data.countries[code]||data.countries[code].camp===camp) return;
+    if(autoOn[active]){
+      grStatus('Camp calculé automatiquement : désactivez « Camp auto » pour le modifier à la main.', true);
+      return;
+    }
     const n = active;
     data.countries[code].camp=camp;
     // la coordonnée sur l'axe de ce texte n'est plus dans la zone du camp : on la réinitialise
@@ -1140,18 +1240,60 @@ function renderPlane(){
     '<div class="plane" id="plane"><div class="plane-grid">'+zones+'</div></div>'+
     '<div class="plane-axis-x">'+axisX+'</div></div>';
   const plane = document.getElementById('plane');
-  base.order.filter(c=>base.countries[c].name.toLowerCase().includes(q) || c.toLowerCase().includes(q)).forEach(code=>{
+  const items = base.order.filter(c=>base.countries[c].name.toLowerCase().includes(q) || c.toLowerCase().includes(q)).map(code=>{
     const d = base.countries[code], pt = coordOf(code);
     const size = Math.round(26 + Math.sqrt(d.w)*5);
+    const cp = clampInPlane(plane, size, pt.x, pt.y);
+    // un pays dont une coordonnée est calculée (camp automatique) peut être écarté de ses voisins
+    return {code:code, d:d, size:size, x:cp.x, y:cp.y, ox:cp.x, oy:cp.y, movable: (autoOn[1]||autoOn[2]), ax: !!autoOn[1], ay: !!autoOn[2]};
+  });
+  spreadDots(plane, items);
+  items.forEach(it=>{
+    const code = it.code, d = it.d, size = it.size, cp = {x:it.x, y:it.y};
     const dot = document.createElement('div');
     dot.className = 'dot'; dot.dataset.code = code;
-    const cp = clampInPlane(plane, size, pt.x, pt.y);
     dot.style.cssText = 'left:'+cp.x+'%;bottom:'+cp.y+'%;width:'+size+'px;height:'+size+'px';
     dot.title = d.name+' — '+d.w.toFixed(2)+' % · '+texts.t1+' : '+campName(d.camp,1)+' · '+texts.t2+' : '+campName(camp2Of(code),2);
     dot.innerHTML = '<span class="flag">'+(FLAGS[code]||'')+'</span><span class="dc">'+esc(code)+'</span>';
     wireDot(dot, plane, code);
     plane.appendChild(dot);
   });
+}
+
+/* Écarte les pastilles qui se chevauchent (ex. tous les pays très convaincus dans un même coin).
+   Seuls les pays à position calculée bougent, et d'au plus ~7 % du cadre : l'ordre de grandeur
+   de la conviction reste lisible. Déterministe (même rendu à chaque affichage). */
+function spreadDots(plane, items){
+  const r = plane.getBoundingClientRect();
+  if(!r.width || !r.height || items.length < 2) return;
+  const W = r.width, H = r.height, maxD = 0.07*W;
+  const px = it => ({x: it.x/100*W, y: it.y/100*H});
+  for(let iter=0; iter<80; iter++){
+    let moved = false;
+    for(let i=0;i<items.length;i++) for(let j=i+1;j<items.length;j++){
+      const a = items[i], b = items[j];
+      if(!a.movable && !b.movable) continue;
+      const pa = px(a), pb = px(b);
+      let dx = pb.x-pa.x, dy = pb.y-pa.y, dist = Math.hypot(dx, dy);
+      const min = (a.size+b.size)/2 + 2;
+      if(dist >= min) continue;
+      if(dist < 0.01){ const ang = (a.code.charCodeAt(0)*7 + b.code.charCodeAt(a.code.length>1?1:0)*13) % 360 * Math.PI/180; dx = Math.cos(ang); dy = Math.sin(ang); dist = 1; }
+      const push = (min-dist)/2 + 0.1, ux = dx/dist, uy = dy/dist;
+      const aw = a.movable, bw = b.movable, share = (aw && bw) ? 1 : 2;   // un seul mobile : il fait tout le déplacement
+      // on ne déplace un pays que le long des axes dont la coordonnée est calculée
+      if(aw){ if(a.ax) a.x -= ux*push*share/W*100; if(a.ay) a.y -= uy*push*share/H*100; }
+      if(bw){ if(b.ax) b.x += ux*push*share/W*100; if(b.ay) b.y += uy*push*share/H*100; }
+      moved = true;
+    }
+    items.forEach(it=>{
+      if(!it.movable) return;
+      // borne : proche de la position d'origine, et dans le cadre
+      it.x = Math.max(it.ox - maxD/W*100, Math.min(it.ox + maxD/W*100, it.x));
+      it.y = Math.max(it.oy - maxD/H*100, Math.min(it.oy + maxD/H*100, it.y));
+      const c = clampInPlane(plane, it.size, it.x, it.y); it.x = c.x; it.y = c.y;
+    });
+    if(!moved) break;
+  }
 }
 
 function wireDot(dot, plane, code){
@@ -1175,12 +1317,20 @@ function wireDot(dot, plane, code){
     dot.releasePointerCapture(e.pointerId); dot.classList.remove('dragging');
     if(!moved){ useDataset(1); openCard(code); return; }   // la fiche s'ouvre sur la table liée
     const p = pos(e), d = baseData().countries[code];
-    d.x = Math.round(p.x*10)/10; d.y = Math.round(p.y*10)/10;
-    d.camp = zoneOf(d.x);
-    const c2 = zoneOf(d.y); setCamp2Local(code, c2);
+    // un axe en camp automatique n'est pas modifiable à la main : sa position vient du taux de conviction
+    const fields = {};
+    if(!autoOn[1]){
+      d.x = Math.round(p.x*10)/10; d.camp = zoneOf(d.x);
+      fields.Camp = campName(d.camp,1); fields.Plan_X = d.x;
+    }
+    let c2 = camp2Of(code);
+    if(!autoOn[2]){
+      d.y = Math.round(p.y*10)/10; c2 = zoneOf(d.y); setCamp2Local(code, c2);
+      fields.Plan_Y = d.y;
+    }
     render();
-    await pushRowTo(1, code, {Plan_X:d.x, Plan_Y:d.y, Camp:campName(d.camp,1)});
-    await pushCamp2(code, c2);
+    if(Object.keys(fields).length) await pushRowTo(1, code, fields);
+    if(!autoOn[2]) await pushCamp2(code, c2);
   });
   dot.addEventListener('pointercancel', ()=>{ dot.classList.remove('dragging'); render(); });
 }
@@ -1194,14 +1344,17 @@ function openCard(code){
   document.getElementById('mPop').textContent=d.w.toFixed(2)+' %';
   document.getElementById('mNote').value=d.note||'';
   document.getElementById('mCamp').innerHTML=CAMP_ORDER.map(id=>
-    '<label><input type="radio" name="camp" value="'+id+'" '+(d.camp===id?'checked':'')+'><span>'+esc(camps[id])+'</span></label>').join('');
+    '<label><input type="radio" name="camp" value="'+id+'" '+(d.camp===id?'checked':'')+(autoOn[active]?' disabled':'')+'><span>'+esc(camps[id])+'</span></label>').join('');
   document.getElementById('mCampLab').textContent = 'Camp — ' + (active===2 ? texts.t2 : texts.t1);
+  if(autoOn[active] && d.autoScore){
+    document.getElementById('mCampLab').textContent += ' (calculé automatiquement : ' + camps.reforme + ' ' + Math.round(d.autoScore.g) + ' % · ' + camps.ets + ' ' + Math.round(d.autoScore.o) + ' %)';
+  }
   // le camp sur « l'autre » texte n'est proposé que depuis la fiche du texte 1
   const showC2 = active===1 && planeReady() && hasPlanCols;
   document.getElementById('mCamp2Lab').textContent = 'Camp — ' + texts.t2;
   document.getElementById('mCamp2').parentElement.style.display = showC2 ? '' : 'none';
   document.getElementById('mCamp2').innerHTML=!showC2 ? '' : CAMP_ORDER.map(id=>
-    '<label><input type="radio" name="camp2" value="'+id+'" '+(camp2Of(current)===id?'checked':'')+'><span>'+esc(campName(id,2))+'</span></label>').join('');
+    '<label><input type="radio" name="camp2" value="'+id+'" '+(camp2Of(current)===id?'checked':'')+(autoOn[2]?' disabled':'')+'><span>'+esc(campName(id,2))+'</span></label>').join('');
   document.getElementById('mParams').innerHTML='<div class="prio-reset"><button type="button" class="btn ghost mini" id="prioReset">Réinitialiser l\'ordre</button></div>'+prioOrder(code, params).map(p=>{
     const v=d.pos[p.id]||{};
     return '<div class="param '+(v.stance?'active':'')+'" data-p="'+p.id+'">'+
@@ -1253,18 +1406,20 @@ document.getElementById('mSave').addEventListener('click', async ()=>{
   const d=data.countries[current];
   const n = active, code = current;
   const prevCamp=d.camp, prevCamp2 = n===1 ? camp2Of(code) : null;
-  d.camp=document.querySelector('#mCamp input:checked').value;
+  const autoHere = !!autoOn[n];      // camp calculé : on ne lit ni n'écrit le camp saisi à la main
+  if(!autoHere) d.camp=document.querySelector('#mCamp input:checked').value;
   d.note=document.getElementById('mNote').value;
-  d.pos={}; const fields={Camp:camps[d.camp], Notes:d.note};
+  d.pos={}; const fields={Notes:d.note};
+  if(!autoHere) fields.Camp = camps[d.camp];
   let camp2Changed = null;    // nouveau camp 2 à écrire séparément (selon la table concernée)
   let planFields = null;      // coordonnées à réinitialiser dans la table liée
   if(n===1 && hasPlanCols){
     // un changement de camp replace le pays au centre de sa nouvelle zone
     if(d.camp!==prevCamp) d.x=null;
-    const c2 = document.querySelector('#mCamp2 input:checked');
+    const c2 = autoOn[2] ? null : document.querySelector('#mCamp2 input:checked');
     if(c2 && c2.value!==prevCamp2){ camp2Changed = c2.value; setCamp2Local(code, c2.value); d.y=null; }
     fields.Plan_X=d.x; fields.Plan_Y=d.y;
-  } else if(n===2 && d.camp!==prevCamp){
+  } else if(n===2 && !autoHere && d.camp!==prevCamp){
     // le camp du texte 2 pilote l'axe vertical : on réinitialise Plan_Y dans la table liée
     const c1 = baseData().countries[code];
     if(c1 && hasPlanCols){ c1.y=null; planFields = {Plan_Y:null}; }
@@ -1315,6 +1470,15 @@ document.getElementById('btnPlane').addEventListener('click', ()=>{
   planeMode = !planeMode;
   render();
 });
+// Interrupteur du camp automatique, un par texte (visibles aussi en plan 2D) ; désactiver recharge les camps saisis à la main.
+[1,2].forEach(n=>document.getElementById('btnAuto'+n).addEventListener('click', async ()=>{
+  const e = {};
+  e['auto.'+n] = autoOn[n] ? '' : '1';
+  try{ await saveCfg(e); }
+  catch(err){ grStatus('Réglage impossible : '+errText(err), true); return; }
+  autoOn[n] = !autoOn[n];
+  await refresh();
+}));
 // Choix du texte affiché en vue 1D : quitte le plan 2D et change le jeu de données actif.
 [1,2].forEach(n=>document.getElementById('btnT'+n).addEventListener('click', ()=>{
   if(!DS[n]){
@@ -1374,6 +1538,46 @@ function cfgRender(){
   document.getElementById('cfgWarn').textContent =
     (added||removed) ? added+' colonne(s) à créer, '+removed+' paramètre(s) à supprimer' : '';
   document.getElementById('cfgWarn').className = 'file-state' + ((added||removed)?' warn':'');
+  cfgAutoRender();
+}
+
+/* Section « Camp automatique » : interrupteur et poids par rang de priorité, pour chaque texte. */
+function cfgAutoRender(){
+  document.getElementById('cfgAuto').innerHTML = [1,2].map(n=>{
+    const ps = draft.params.filter(p=>p.text===n && !p.hidden);
+    const W = draft.weights[n] || [];
+    const eq = ps.length ? Math.round(100/ps.length) : 0;
+    const name = n===2 ? draft.texts.t2 : draft.texts.t1;
+    // colonne « Poids (%) » : un champ par rang de priorité (rang 1 = sous-sujet le plus prioritaire du pays)
+    const rows = ps.map((p,i)=>
+      '<tr><td>Priorité n°'+(i+1)+'</td><td><input type="number" min="0" max="100" step="1" data-n="'+n+'" data-i="'+i+'" value="'+(W[i]!==undefined?W[i]:'')+'" placeholder="'+eq+'"> %</td></tr>').join('');
+    const inputs = '<table class="cfg-wtable"><thead><tr><th>Priorité du pays</th><th>Poids (%)</th></tr></thead><tbody>'+rows+'</tbody></table>';
+    return '<div class="cfg-auto"><label class="a-on"><input type="checkbox" data-n="'+n+'" '+(draft.auto[n]?'checked':'')+'> Calculer automatiquement le camp sur <b>'+esc(name)+'</b></label>'+
+      (ps.length ? '<div class="cfg-weights">'+inputs+'</div><div class="a-sum" data-sum="'+n+'"></div>'
+                 : '<div class="a-sum">Aucun sous-sujet rattaché à ce texte.</div>')+'</div>';
+  }).join('');
+  [1,2].forEach(cfgAutoSum);
+}
+
+// Poids saisis pour un texte : les blancs de fin sont ignorés, un blanc intermédiaire vaut 0.
+function cfgAutoWeights(n){
+  const arr = Array.from(document.querySelectorAll('#cfgAuto input[type=number][data-n="'+n+'"]'))
+    .map(i=>i.value.trim()==='' ? null : Math.max(0, Number(i.value)||0));
+  while(arr.length && arr[arr.length-1]===null) arr.pop();
+  return arr.map(v=>v===null ? 0 : v);
+}
+
+function cfgAutoSum(n){
+  const el = document.querySelector('#cfgAuto [data-sum="'+n+'"]');
+  if(!el) return;
+  const W = cfgAutoWeights(n), sum = W.reduce((a,b)=>a+b, 0);
+  const k = draft.params.filter(p=>p.text===n && !p.hidden).length;
+  let msg, warn = false;
+  if(!W.length) msg = 'Poids égaux par défaut ('+Math.round(100/Math.max(1,k))+' % chacun).';
+  else if(sum > 100){ msg = 'Somme : '+sum+' % — dépasse 100 %, les poids seront ramenés à 100 %.'; warn = true; }
+  else msg = 'Somme : '+sum+' % — reste '+(100-sum)+' % réparti à parts égales entre les sous-sujets non classés du pays.';
+  el.textContent = msg;
+  el.className = 'a-sum' + (warn ? ' warn' : '');
 }
 
 function cfgCollect(){
@@ -1385,6 +1589,13 @@ function cfgCollect(){
   document.querySelectorAll('#cfgCamps input').forEach(i=>{
     const v = i.value.trim(); if(v) draft.camps[i.dataset.camp] = v;
   });
+  if(document.querySelector('#cfgAuto [data-n]')){
+    [1,2].forEach(n=>{
+      const cb = document.querySelector('#cfgAuto input[type=checkbox][data-n="'+n+'"]');
+      if(cb) draft.auto[n] = cb.checked;
+      if(document.querySelector('#cfgAuto input[type=number][data-n="'+n+'"]')) draft.weights[n] = cfgAutoWeights(n);
+    });
+  }
   document.querySelectorAll('#cfgParams .cfg-row').forEach(row=>{
     const p = draft.params[+row.dataset.i];
     const n = row.querySelector('.c-name').value.trim();
@@ -1397,6 +1608,7 @@ function cfgCollect(){
 
 document.getElementById('btnCfg').addEventListener('click', ()=>{
   draft = {title: title, texts: Object.assign({}, texts), camps: Object.assign({}, camps), table2: TABLE2,
+           auto: Object.assign({}, autoOn), weights: {1: weightsBy[1].slice(), 2: weightsBy[2].slice()},
            // tous les sous-sujets des deux textes, classés par texte puis par ordre
            params: allParams.map(p=>Object.assign({}, p)).sort((a,b)=>a.text-b.text || a.ordre-b.ordre), removed: []};
   cfgRender();
@@ -1416,6 +1628,10 @@ async function fillTable2Select(){
   sel.innerHTML = '<option value="">(aucune — un seul tableau)</option>' +
     ids.map(id=>'<option value="'+esc(id)+'"'+(id===draft.table2?' selected':'')+'>'+esc(id)+'</option>').join('');
 }
+
+document.getElementById('cfgAuto').addEventListener('input', e=>{
+  if(e.target.matches('input[type=number]')) cfgAutoSum(Number(e.target.dataset.n));
+});
 
 // changer le texte d'un sous-sujet le range avec les autres sous-sujets de ce texte
 document.getElementById('cfgParams').addEventListener('change', e=>{
@@ -1547,7 +1763,7 @@ document.getElementById('cfgSave').addEventListener('click', async ()=>{
     // seconde étape : les intitulés lisibles. Un échec ici ne remet pas en cause
     // les colonnes et les camps, déjà écrits.
     try{
-      await writeConfig(draft.params, draft.camps, draft.title, draft.texts, draft.table2);
+      await writeConfig(draft.params, draft.camps, draft.title, draft.texts, draft.table2, {on: draft.auto, weights: draft.weights});
       grStatus(newParams.length
         ? newParams.length+' paramètre(s) ajouté(s) : colonnes créées'+visNote
         : 'Configuration appliquée dans Grist');
