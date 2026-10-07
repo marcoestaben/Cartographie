@@ -438,9 +438,9 @@ async function detectTable(){
 }
 
 // Confirme qu'une colonne existe réellement dans la table après écriture.
-async function columnExists(col){
+async function columnExists(col, tableId){
   try{
-    const t = await grist.docApi.fetchTable(TABLE);
+    const t = await grist.docApi.fetchTable(tableId || TABLE);
     return Object.prototype.hasOwnProperty.call(t, col);
   }catch(e){ return false; }
 }
@@ -534,8 +534,9 @@ function defaultTextOf(col, name){
   const s = norm(col+' '+name).replace(/[^a-z0-9]/g,'');
   return /m1e|madeineurope/.test(s) ? 2 : 1;
 }
-function deriveParams(rec, pfx){
-  pfx = '';   // tous les sous-sujets vivent dans la table liée : réglages communs aux deux textes
+function deriveParams(rec, src){
+  const pfx = '';   // réglages communs aux deux textes ; src = table où vivent les colonnes (1 = liée, 2 = seconde table)
+  src = src === 2 ? 2 : 1;
   const keys = Object.keys(rec);
   const found = {};   // col -> {posCol, srcCol, tagCol}
   keys.forEach(k=>{
@@ -551,7 +552,7 @@ function deriveParams(rec, pfx){
     found[col][kind+'Col'] = k;
   });
   return Object.keys(found).filter(c=>found[c].posCol).map(col=>({
-    id: col, col: col,
+    id: col, col: col, src: src,
     posCol: found[col].posCol,
     srcCol: found[col].srcCol || null,
     tagCol: found[col].tagCol || null,
@@ -560,7 +561,7 @@ function deriveParams(rec, pfx){
     defLabel: CFG[pfx+'param.'+col+'.def'] || '',
     hidden: /^(1|true|oui|yes)$/i.test(CFG[pfx+'param.'+col+'.masque'] || ''),
     ordre: Number(CFG[pfx+'param.'+col+'.ordre'] || 999),
-    text: Number(CFG[pfx+'param.'+col+'.texte']) === 2 ? 2
+    text: src === 2 ? 2 : Number(CFG[pfx+'param.'+col+'.texte']) === 2 ? 2
         : Number(CFG[pfx+'param.'+col+'.texte']) === 1 ? 1 : defaultTextOf(col, CFG[pfx+'param.'+col+'.nom'] || col)
   })).sort((a,b)=> a.ordre - b.ordre || a.name.localeCompare(b.name,'fr'));
 }
@@ -585,10 +586,13 @@ function buildDataset(recs, n, allParams, campSrc){
     const code = String(r.Code||'').trim();
     if(!code) return;
     const pos = {};
+    // un sous-sujet du texte 2 peut vivre dans la seconde table (ligne reliée par Code)
+    const row2 = campSrc.byCode && campSrc.byCode[code] ? campSrc.byCode[code].row : null;
     params.forEach(p=>{
-      const st = STANCE_ID[norm(r[p.posCol])];
-      const src = p.srcCol ? String(r[p.srcCol]||'').trim() : '';
-      const tag = p.tagCol ? String(r[p.tagCol]||'').trim() : '';
+      const row = p.src === 2 ? (row2 || {}) : r;
+      const st = STANCE_ID[norm(row[p.posCol])];
+      const src = p.srcCol ? String(row[p.srcCol]||'').trim() : '';
+      const tag = p.tagCol ? String(row[p.tagCol]||'').trim() : '';
       if(st || src || tag) pos[p.id] = {stance: st||'amb', source: src, label: tag};
     });
     const prio = String(r.Priorites||'').split(',').map(s=>s.trim())
@@ -626,10 +630,20 @@ const pushRow = (code, fields) => pushRowTo(active, code, fields);
 async function pushRowTo(n, code, fields){
   try{
     const ds = DS[n], rowId = ds.data.countries[code].rowId;
-    if(n === 2 && 'Camp' in fields){
+    if(n === 2){
+      // texte 2 : le camp va dans la seconde table (ou Camp2), les colonnes de ses sous-sujets
+      // dans la table où elles vivent ; le reste (notes, priorités) dans la table liée
       fields = Object.assign({}, fields);
-      const campVal = fields.Camp; delete fields.Camp;
-      await writeCamp2(code, campVal);
+      const cols2 = new Set();
+      ds.params.filter(p=>p.src===2).forEach(p=>[p.posCol,p.srcCol,p.tagCol].filter(Boolean).forEach(c=>cols2.add(c)));
+      const f2 = {};
+      Object.keys(fields).forEach(k=>{ if(cols2.has(k)){ f2[k] = fields[k]; delete fields[k]; } });
+      if('Camp' in fields){ const campVal = fields.Camp; delete fields.Camp; await writeCamp2(code, campVal); }
+      if(Object.keys(f2).length){
+        const hit = ds.campByCode && ds.campByCode[code];
+        if(!hit) throw new Error('« '+code+' » est absent de la table du texte 2');
+        await applyActions([['UpdateRecord', ds.campTable, hit.rowId, f2]]);
+      }
     }
     if(Object.keys(fields).length) await grist.selectedTable.update({id: rowId, fields: fields});
     canWrite = true;
@@ -1324,7 +1338,7 @@ function cfgRender(){
     '<div class="cfg-row" data-i="'+i+'">'+
       '<div class="cfg-fields">'+
         '<input class="c-name" value="'+esc(p.name)+'" placeholder="Nom du sous-sujet">'+
-        '<select class="c-text" title="Texte auquel appartient ce sous-sujet">'+[1,2].map(n=>'<option value="'+n+'"'+((p.text||1)===n?' selected':'')+'>'+esc(n===2?draft.texts.t2:draft.texts.t1)+'</option>').join('')+'</select>'+
+        '<select class="c-text" title="'+(p.src===2 ? "Colonnes dans la table du texte 2 : rattachement fixe" : "Texte auquel appartient ce sous-sujet")+'"'+(p.src===2?' disabled':'')+'>'+[1,2].map(n=>'<option value="'+n+'"'+((p.text||1)===n?' selected':'')+'>'+esc(n===2?draft.texts.t2:draft.texts.t1)+'</option>').join('')+'</select>'+
         '<div class="cfg-poles">'+
           '<input class="c-fav" value="'+esc(p.favLabel||'')+'" placeholder="Position « Camp 1 » (défaut : Favorable)">'+
           '<input class="c-def" value="'+esc(p.defLabel||'')+'" placeholder="Position « Camp 2 » (défaut : Défavorable)">'+
@@ -1440,6 +1454,8 @@ document.getElementById('cfgSave').addEventListener('click', async ()=>{
     draft.params.forEach(p=>{
       if(p.isNew){
         p.col = makeCol(p.name, taken); p.id = p.col;
+        // un nouveau sous-sujet du texte 2 est créé dans la seconde table (si elle est choisie)
+        p.src = (p.text === 2 && draft.table2) ? 2 : 1;
         p.posCol = p.col+'_Pos'; p.srcCol = p.col+'_Src'; p.tagCol = p.col+'_Tag';
         taken.push(p.col);
       }
@@ -1455,20 +1471,24 @@ document.getElementById('cfgSave').addEventListener('click', async ()=>{
           + "(bouton « Add widget to page », puis choisissez cette table), et non comme page indépendante");
       }
     }
+    // table où vivent les colonnes d'un sous-sujet : seconde table (src 2) ou table liée
+    const tblOf = p => p.src === 2 ? (p.isNew ? draft.table2 : TABLE2) : TABLE1;
     newParams.forEach(p=>{
-      actions.push(['AddColumn', TABLE, p.posCol, {type:'Choice', label:'Position — '+p.name,
+      const T = tblOf(p);
+      actions.push(['AddColumn', T, p.posCol, {type:'Choice', label:'Position — '+p.name,
         widgetOptions: JSON.stringify({choices: POSITIONS})}]);
-      actions.push(['AddColumn', TABLE, p.srcCol, {type:'Text', label:'Source — '+p.name}]);
-      actions.push(['AddColumn', TABLE, p.tagCol, {type:'Text', label:'Tag — '+p.name}]);
+      actions.push(['AddColumn', T, p.srcCol, {type:'Text', label:'Source — '+p.name}]);
+      actions.push(['AddColumn', T, p.tagCol, {type:'Text', label:'Tag — '+p.name}]);
     });
     draft.removed.forEach(p=>{
-      [p.posCol, p.srcCol, p.tagCol].filter(Boolean).forEach(c=>actions.push(['RemoveColumn', TABLE, c]));
+      [p.posCol, p.srcCol, p.tagCol].filter(Boolean).forEach(c=>actions.push(['RemoveColumn', tblOf(p), c]));
     });
     // libellés de colonnes mis à jour après renommage
     draft.params.filter(p=>!p.isNew).forEach(p=>{
-      actions.push(['ModifyColumn', TABLE, p.posCol, {label:'Position — '+p.name}]);
-      if(p.srcCol) actions.push(['ModifyColumn', TABLE, p.srcCol, {label:'Source — '+p.name}]);
-      if(p.tagCol) actions.push(['ModifyColumn', TABLE, p.tagCol, {label:'Tag — '+p.name}]);
+      const T = tblOf(p);
+      actions.push(['ModifyColumn', T, p.posCol, {label:'Position — '+p.name}]);
+      if(p.srcCol) actions.push(['ModifyColumn', T, p.srcCol, {label:'Source — '+p.name}]);
+      if(p.tagCol) actions.push(['ModifyColumn', T, p.tagCol, {label:'Tag — '+p.name}]);
     });
     // camps renommés : liste de choix ET valeurs déjà saisies
     const renamed = CAMP_ORDER.filter(id=>draft.camps[id] !== camps[id]);
@@ -1489,7 +1509,7 @@ document.getElementById('cfgSave').addEventListener('click', async ()=>{
     let visNote = '';
     if(newParams.length){
       let ok = true;
-      for(const p of newParams){ if(!(await columnExists(p.posCol))){ ok = false; break; } }
+      for(const p of newParams){ if(!(await columnExists(p.posCol, tblOf(p)))){ ok = false; break; } }
       if(!ok){
         grStatus("Les colonnes n'ont pas été créées dans la table. Vérifiez « Full document access » "
           + "dans le panneau de droite, puis réessayez.", true);
@@ -1497,9 +1517,13 @@ document.getElementById('cfgSave').addEventListener('click', async ()=>{
         return;
       }
       // rendre les nouvelles colonnes visibles dans toutes les grilles de la table
-      const cols = [];
-      newParams.forEach(p=>{ cols.push(p.posCol); if(p.srcCol) cols.push(p.srcCol); if(p.tagCol) cols.push(p.tagCol); });
-      const vis = await makeColumnsVisible(cols);
+      const byTable = {};
+      newParams.forEach(p=>{ const T = tblOf(p); (byTable[T] = byTable[T] || []).push(p.posCol, p.srcCol, p.tagCol); });
+      let vis = {ok:true, grids:0};
+      for(const T of Object.keys(byTable)){
+        const v = await makeColumnsVisible(byTable[T], T);
+        if(!v.ok) vis = v; else if(vis.ok) vis.grids += v.grids;
+      }
       visNote = vis.ok
         ? ' et affichées dans '+vis.grids+' grille(s)'
         : ' (colonnes masquées : affichage automatique impossible — '+vis.reason+'. À démasquer à la main dans la grille)';
@@ -1566,9 +1590,11 @@ async function refresh(){
   const has = (recs, c) => recs.length > 0 && Object.prototype.hasOwnProperty.call(recs[0], c);
   hasPlanCols = has(rec1,'Camp2') && has(rec1,'Plan_X') && has(rec1,'Plan_Y');
   // sous-sujets : toutes les colonnes Xxx_Pos de la table liée, chacune rattachée à un texte
-  allParams = rec1.length ? deriveParams(rec1[0]) : [];
+  allParams = rec1.length ? deriveParams(rec1[0], 1) : [];
+  // sous-sujets du texte 2 créés dans la seconde table : colonnes Xxx_Pos de cette table
+  if(rec2 && rec2.length) deriveParams(rec2[0], 2).forEach(p=>{ if(!allParams.some(q=>q.id===p.id)) allParams.push(p); });
   const byCode = {};
-  (rec2 || []).forEach(r=>{ const k = String(r.Code||'').trim(); if(k) byCode[k] = {rowId:r.id, value:r.Camp}; });
+  (rec2 || []).forEach(r=>{ const k = String(r.Code||'').trim(); if(k) byCode[k] = {rowId:r.id, value:r.Camp, row:r}; });
   DS[1] = buildDataset(rec1, 1, allParams, {table:TABLE1, col:'Camp', records:rec1});
   DS[2] = buildDataset(rec1, 2, allParams, rec2
     ? {table:TABLE2, col:'Camp', records:rec2, byCode:byCode}
