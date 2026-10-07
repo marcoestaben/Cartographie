@@ -305,14 +305,14 @@
         <input id="cfgT1" placeholder="Texte 1 (défaut : CAFE)">
         <input id="cfgT2" placeholder="Texte 2 (défaut : IAA)">
       </div>
-      <span class="lab" style="margin-top:8px">Table Grist du texte 2 (même structure : Code, Pays, Poids, Camp, Xxx_Pos…)</span>
+      <span class="lab" style="margin-top:8px">Table Grist du texte 2 — facultative : fournit seulement le camp de chaque pays (colonnes Code et Camp)</span>
       <select id="cfgTable2" style="width:100%;padding:6px 8px;border:1px solid var(--rule);font-size:13px;font-family:var(--sans);background:#FBFBFC"></select>
     </div>
     <div class="field"><span class="lab" id="cfgCampsLab">Nom des camps</span><div id="cfgCamps"></div></div>
     <div class="field">
-      <span class="lab">Paramètres</span>
+      <span class="lab">Sous-sujets (positions par texte)</span>
       <div id="cfgParams"></div>
-      <button class="btn ghost mini" id="cfgAdd" style="margin-top:4px">+ Ajouter un paramètre</button>
+      <button class="btn ghost mini" id="cfgAdd" style="margin-top:4px">+ Ajouter un sous-sujet</button>
     </div>
   </div>
   <div class="m-foot">
@@ -345,13 +345,14 @@ const STANCES = [{id:'fav',label:'Favorable'},{id:'amb',label:'Ambiguë'},{id:'d
 const STANCE_LABEL = {fav:'Favorable', amb:'Ambiguë', def:'Défavorable'};
 const POSITIONS = ['Favorable','Ambiguë','Défavorable'];
 const STANCE_ID = {'favorable':'fav','ambigue':'amb','defavorable':'def'};
+// [colonne, nom, phrase, texte] — sous-sujets de CAFE (1) et d'IAA (2)
 const DEFAULT_PARAMS = [
-  ['Plafond','Hausse du plafond (LRF)','à la hausse du plafond (LRF)'],
-  ['Benchmarks','Prévisibilité et progressivité des benchmarks','à la progressivité des benchmarks'],
-  ['Quotas','Ralentissement de la baisse des quotas gratuits','au ralentissement de la baisse des quotas gratuits'],
-  ['Decarbonation',"Soutien à la décarbonation de l'industrie","au soutien à la décarbonation de l'industrie"],
-  ['Prix','Prévisibilité des prix','à la prévisibilité des prix'],
-  ['Suspension',"Suspension de l'ETS","à la suspension de l'ETS"]
+  ['CategorieVEEf','Catégorie VEEf','',1],
+  ['Supercredit','Supercrédit','',1],
+  ['Cibles','Cibles 2030-2035','',1],
+  ['FacteurUtilite',"Facteur d'Utilité",'',1],
+  ['CategorieM1E','Catégorie M1E','',2],
+  ['MadeInEurope','Notion de Made in Europe','',2]
 ];
 
 const FLAGS = {FR:'🇫🇷',DE:'🇩🇪',IT:'🇮🇹',ES:'🇪🇸',PL:'🇵🇱',RO:'🇷🇴',NL:'🇳🇱',BE:'🇧🇪',CZ:'🇨🇿',SE:'🇸🇪',PT:'🇵🇹',EL:'🇬🇷',HU:'🇭🇺',AT:'🇦🇹',BG:'🇧🇬',DK:'🇩🇰',FI:'🇫🇮',SK:'🇸🇰',IE:'🇮🇪',HR:'🇭🇷',LT:'🇱🇹',SI:'🇸🇮',LV:'🇱🇻',EE:'🇪🇪',CY:'🇨🇾',LU:'🇱🇺',MT:'🇲🇹'};
@@ -367,10 +368,11 @@ let CFG = {};
 let TABLE = null;
 let lastRecords = [];
 /* Deux textes = deux tables Grist de même structure (Code, Pays, Poids, Camp, Xxx_Pos…).
-   DS[1] = table liée au widget, DS[2] = seconde table (option « table2 »).
+   DS[1] et DS[2] lisent la même table liée (leurs sous-sujets diffèrent) ; le camp du texte 2 vient de la seconde table (option « table2 ») ou de la colonne Camp2.
    Les globals params / data / TOTAL / TABLE / lastRecords reflètent le texte ACTIF (vue 1D) ;
    le plan 2D et le croisement lisent toujours DS[1] et DS[2]. */
 let DS = {1:null, 2:null};
+let allParams = [];       // sous-sujets des deux textes (colonnes Xxx_Pos de la table liée)
 let active = 1;
 let TABLE1 = null, TABLE2 = '';
 let streamRecords = [];   // dernier flux onRecords (table liée uniquement)
@@ -526,8 +528,14 @@ async function loadConfig(){
 const cfgPrefix = n => (n||active)===2 ? 't2.' : '';
 
 /* ---------- Détection des paramètres ---------- */
+/* Texte auquel appartient un sous-sujet tant qu'aucun choix n'est enregistré :
+   M1E et « Made in Europe » relèvent du texte 2 (IAA), tout le reste du texte 1 (CAFE). */
+function defaultTextOf(col, name){
+  const s = norm(col+' '+name).replace(/[^a-z0-9]/g,'');
+  return /m1e|madeineurope/.test(s) ? 2 : 1;
+}
 function deriveParams(rec, pfx){
-  pfx = pfx || '';
+  pfx = '';   // tous les sous-sujets vivent dans la table liée : réglages communs aux deux textes
   const keys = Object.keys(rec);
   const found = {};   // col -> {posCol, srcCol, tagCol}
   keys.forEach(k=>{
@@ -551,7 +559,9 @@ function deriveParams(rec, pfx){
     favLabel: CFG[pfx+'param.'+col+'.fav'] || '',
     defLabel: CFG[pfx+'param.'+col+'.def'] || '',
     hidden: /^(1|true|oui|yes)$/i.test(CFG[pfx+'param.'+col+'.masque'] || ''),
-    ordre: Number(CFG[pfx+'param.'+col+'.ordre'] || 999)
+    ordre: Number(CFG[pfx+'param.'+col+'.ordre'] || 999),
+    text: Number(CFG[pfx+'param.'+col+'.texte']) === 2 ? 2
+        : Number(CFG[pfx+'param.'+col+'.texte']) === 1 ? 1 : defaultTextOf(col, CFG[pfx+'param.'+col+'.nom'] || col)
   })).sort((a,b)=> a.ordre - b.ordre || a.name.localeCompare(b.name,'fr'));
 }
 
@@ -565,10 +575,11 @@ function campInFor(t){
 }
 
 /* Construit le jeu de données d'un texte à partir des lignes de sa table. */
-function buildDataset(records, n, tableId){
-  const recs = records || [];
-  const params = recs.length ? deriveParams(recs[0], cfgPrefix(n)) : [];
-  const campIn = campInFor(n), campIn2 = campInFor(2);
+function buildDataset(recs, n, allParams, campSrc){
+  recs = recs || [];
+  // les deux textes lisent les mêmes lignes (table liée) ; chacun ne garde que ses sous-sujets
+  const params = allParams.filter(p=>p.text===n);
+  const campIn = campInFor(n);
   const c = {}, order = []; let tot = 0;
   recs.forEach(r=>{
     const code = String(r.Code||'').trim();
@@ -582,14 +593,20 @@ function buildDataset(records, n, tableId){
     });
     const prio = String(r.Priorites||'').split(',').map(s=>s.trim())
       .filter((id,i,a)=>id && a.indexOf(id)===i && params.some(p=>p.id===id));
+    // camp : colonne Camp pour le texte 1 ; pour le texte 2, seconde table (reliée par Code) sinon colonne Camp2
+    let rawCamp = r.Camp;
+    if(n === 2){
+      const cr = campSrc.byCode && campSrc.byCode[code];
+      rawCamp = cr ? cr.value : r.Camp2;
+    }
     c[code] = {rowId:r.id, name:r.Pays||code, w:Number(r.Poids)||0,
-               camp: campIn[norm(r.Camp)] || 'indecis', note:r.Notes||'', pos:pos, prio:prio,
-               camp2: campIn2[norm(r.Camp2)] || 'indecis',
+               camp: campIn[norm(rawCamp)] || 'indecis', note:r.Notes||'', pos:pos, prio:prio,
                x: typeof r.Plan_X==='number' ? r.Plan_X : null,
                y: typeof r.Plan_Y==='number' ? r.Plan_Y : null};
     order.push(code); tot += Number(r.Poids)||0;
   });
-  return {n:n, table:tableId, records:recs, params:params, data:{countries:c, order:order}, total:tot || 1};
+  return {n:n, table:TABLE1, records:recs, params:params, data:{countries:c, order:order}, total:tot || 1,
+          campTable:campSrc.table, campCol:campSrc.col, campRecords:campSrc.records, campByCode:campSrc.byCode || null};
 }
 
 /* Rend actif un des deux textes : les globals de la vue 1D pointent sur son jeu de données. */
@@ -604,13 +621,17 @@ function useDataset(n){
 
 const pushRow = (code, fields) => pushRowTo(active, code, fields);
 
-/* Écrit dans la table du texte n. La table liée passe par selectedTable ; la seconde,
-   par une action utilisateur (le widget n'y est pas lié). */
+/* Écrit les champs d'un pays dans la table liée (les deux textes y lisent leurs sous-sujets).
+   Pour le texte 2, le champ Camp est routé vers la seconde table (ou la colonne Camp2). */
 async function pushRowTo(n, code, fields){
   try{
     const ds = DS[n], rowId = ds.data.countries[code].rowId;
-    if(n === 1) await grist.selectedTable.update({id: rowId, fields: fields});
-    else await applyActions([['UpdateRecord', ds.table, rowId, fields]]);
+    if(n === 2 && 'Camp' in fields){
+      fields = Object.assign({}, fields);
+      const campVal = fields.Camp; delete fields.Camp;
+      await writeCamp2(code, campVal);
+    }
+    if(Object.keys(fields).length) await grist.selectedTable.update({id: rowId, fields: fields});
     canWrite = true;
     grStatus('Enregistré dans Grist');
   }catch(e){
@@ -630,9 +651,12 @@ function showSetup(){
   const msgs = [];
   if(!lastRecords.length){
     msgs.push("La table sélectionnée ne contient aucune ligne. Le widget doit être posé sur la table des positions.");
-  } else if(!params.length){
+  } else if(!allParams.length){
     msgs.push("Aucun paramètre détecté : la table ne contient pas de colonnes de position reconnaissables "
       + "(<b>Xxx_Pos</b> ou <b>Position_Xxx</b>). Utilisez « Configurer » pour créer les colonnes.");
+  }
+  if(allParams.length && !params.length && lastRecords.length){
+    msgs.push("Aucun sous-sujet n'est rattaché à ce texte : utilisez « Configurer » pour en ajouter ou en rattacher.");
   }
   if(canWrite === false){
     msgs.push("Le widget n'a pas le droit d'écrire. Dans le panneau de droite de Grist, section <b>Custom</b>, "
@@ -640,7 +664,7 @@ function showSetup(){
   }
   if(!msgs.length){ box.hidden = true; return; }
   box.innerHTML = msgs.map(m=>'<p>'+m+'</p>').join('') +
-    (!params.length && lastRecords.length ? '<button class="btn mini" id="btnRepair">Créer les six colonnes par défaut</button>' : '');
+    (!allParams.length && lastRecords.length ? '<button class="btn mini" id="btnRepair">Créer les six colonnes par défaut</button>' : '');
   box.hidden = false;
   const rep = document.getElementById('btnRepair');
   if(rep) rep.addEventListener('click', repairSchema);
@@ -659,7 +683,7 @@ async function repairSchema(){
     const present = lastRecords.length ? Object.keys(lastRecords[0]) : [];
     Object.keys(EXTRA_COLS).filter(c=>!present.includes(c) && (active===1 || c==='Priorites')).forEach(c=>actions.push(['AddColumn', TABLE, c, EXTRA_COLS[c]()]));
     await applyActions(actions);
-    await writeConfig(DEFAULT_PARAMS.map(([col,name,phrase])=>({col:col,name:name,phrase:phrase})), camps, title);
+    await writeConfig(DEFAULT_PARAMS.map(([col,name,phrase,text])=>({col:col,name:name,phrase:phrase,text:text})), camps, title);
     grStatus('Colonnes créées. Le tableau se recharge.');
   }catch(e){
     grStatus('Création impossible : '+errText(e), true);
@@ -677,14 +701,18 @@ async function writeConfig(paramList, campList, newTitle, newTexts, newTable2){
   const tx = newTexts || texts;
   entries.texte1 = tx.t1; entries.texte2 = tx.t2;
   entries.table2 = newTable2 === undefined ? TABLE2 : newTable2;
-  const pfx = cfgPrefix();   // les paramètres écrits sont ceux du texte actif
+  const pfx = cfgPrefix();   // les noms de camps écrits sont ceux du texte actif
   CAMP_ORDER.forEach(id=>{ entries[pfx+'camp_'+id] = campList[id]; });
-  paramList.forEach((p,i)=>{
-    entries[pfx+'param.'+p.col+'.nom'] = p.name;
-    entries[pfx+'param.'+p.col+'.fav'] = p.favLabel || '';
-    entries[pfx+'param.'+p.col+'.def'] = p.defLabel || '';
-    entries[pfx+'param.'+p.col+'.masque'] = p.hidden ? '1' : '';
-    entries[pfx+'param.'+p.col+'.ordre'] = String(i+1);
+  // sous-sujets : réglages communs, chacun rattaché à son texte ; l'ordre est propre à chaque texte
+  const seen = {1:0, 2:0};
+  paramList.forEach(p=>{
+    const t = p.text === 2 ? 2 : 1;
+    entries['param.'+p.col+'.nom'] = p.name;
+    entries['param.'+p.col+'.fav'] = p.favLabel || '';
+    entries['param.'+p.col+'.def'] = p.defLabel || '';
+    entries['param.'+p.col+'.masque'] = p.hidden ? '1' : '';
+    entries['param.'+p.col+'.texte'] = String(t);
+    entries['param.'+p.col+'.ordre'] = String(++seen[t]);
   });
   const cfg = Object.assign({}, CFG, entries);
   await grist.setOptions({cfg: cfg});
@@ -706,23 +734,27 @@ function prioOrder(code, list){
 /* Camp d'un pays sur le texte 2 : lu dans la seconde table si elle existe (le pays y est
    relié par son Code), sinon dans la colonne Camp2 de la table liée. */
 function camp2Of(code){
-  if(DS[2]){
-    const c = DS[2].data.countries[code];
-    return c ? c.camp : 'indecis';
-  }
-  const c1 = DS[1].data.countries[code];
-  return c1 ? c1.camp2 : 'indecis';
+  const c = DS[2].data.countries[code];
+  return c ? c.camp : 'indecis';
 }
 /* Change le camp d'un pays sur le texte 2 (côté données locales ; l'écriture est à la charge de l'appelant). */
 function setCamp2Local(code, camp){
-  if(DS[2]){ const c = DS[2].data.countries[code]; if(c) c.camp = camp; }
-  else DS[1].data.countries[code].camp2 = camp;
+  const c = DS[2].data.countries[code]; if(c) c.camp = camp;
 }
-/* Écriture du camp 2 dans la bonne table. */
-async function pushCamp2(code, camp){
-  if(DS[2]){ if(DS[2].data.countries[code]) await pushRowTo(2, code, {Camp:campName(camp,2)}); }
-  else if(hasPlanCols) await pushRowTo(1, code, {Camp2:campName(camp,2)});
+/* Écriture du camp du texte 2 : dans la seconde table si le pays y figure, sinon colonne Camp2 de la table liée. */
+async function writeCamp2(code, value){
+  const ds = DS[2], hit = ds.campByCode && ds.campByCode[code];
+  try{
+    if(hit) await applyActions([['UpdateRecord', ds.campTable, hit.rowId, {Camp: value}]]);
+    else if(hasPlanCols) await grist.selectedTable.update({id: ds.data.countries[code].rowId, fields: {Camp2: value}});
+    canWrite = true;
+    grStatus('Enregistré dans Grist');
+  }catch(e){
+    if(isAccessError(e)){ canWrite = false; showSetup(); }
+    grStatus('Enregistrement impossible : '+errText(e), true);
+  }
 }
+const pushCamp2 = (code, camp) => writeCamp2(code, campName(camp,2));
 
 /* axis non précisé : camp dans le texte ACTIF (vue 1D) ; 1 / 2 : camp sur le texte 1 / 2 (croisement). */
 const campOf = (code, axis) => axis===2 ? camp2Of(code) : (axis===1 ? DS[1].data.countries[code].camp : data.countries[code].camp);
@@ -1019,8 +1051,8 @@ function council(){
   document.getElementById('councilBars').innerHTML = html;
 }
 
-// Le second texte existe : soit une seconde table, soit la colonne Camp2 de la table liée.
-const planeReady = () => !!DS[2] || hasPlanCols;
+// Le plan 2D exige les colonnes Camp2 / Plan_X / Plan_Y de la table liée (créées automatiquement).
+const planeReady = () => hasPlanCols;
 
 const cflag = (label, ok, maybe) =>
   '<span class="cflag '+(ok?'ok':(maybe?'maybe':''))+'">'+label+(maybe&&!ok?' · avec les indécis':'')+'</span>';
@@ -1217,7 +1249,11 @@ document.getElementById('mSave').addEventListener('click', async ()=>{
   const ids = Array.from(document.querySelectorAll('#mParams .param')).map(el=>el.dataset.p);
   const sameAsGlobal = ids.length===params.length && ids.every((id,i)=>id===params[i].id);
   d.prio = sameAsGlobal ? [] : ids;
-  if(hasPrioCol) fields.Priorites = d.prio.join(',');
+  if(hasPrioCol){
+    // une seule colonne pour les deux textes : on conserve l'ordre déjà saisi pour l'autre texte
+    const other = DS[n===1 ? 2 : 1].data.countries[code];
+    fields.Priorites = d.prio.concat(other ? other.prio : []).join(',');
+  }
   document.querySelectorAll('#mParams .param').forEach(el=>{
     const p=params.find(x=>x.id===el.dataset.p);
     const st=el.querySelector('input[type=radio]:checked').value;
@@ -1287,7 +1323,8 @@ function cfgRender(){
   document.getElementById('cfgParams').innerHTML = draft.params.map((p,i)=>
     '<div class="cfg-row" data-i="'+i+'">'+
       '<div class="cfg-fields">'+
-        '<input class="c-name" value="'+esc(p.name)+'" placeholder="Nom du paramètre">'+
+        '<input class="c-name" value="'+esc(p.name)+'" placeholder="Nom du sous-sujet">'+
+        '<select class="c-text" title="Texte auquel appartient ce sous-sujet">'+[1,2].map(n=>'<option value="'+n+'"'+((p.text||1)===n?' selected':'')+'>'+esc(n===2?draft.texts.t2:draft.texts.t1)+'</option>').join('')+'</select>'+
         '<div class="cfg-poles">'+
           '<input class="c-fav" value="'+esc(p.favLabel||'')+'" placeholder="Position « Camp 1 » (défaut : Favorable)">'+
           '<input class="c-def" value="'+esc(p.defLabel||'')+'" placeholder="Position « Camp 2 » (défaut : Défavorable)">'+
@@ -1322,6 +1359,7 @@ function cfgCollect(){
     const p = draft.params[+row.dataset.i];
     const n = row.querySelector('.c-name').value.trim();
     if(n) p.name = n;
+    p.text = Number(row.querySelector('.c-text').value) === 2 ? 2 : 1;
     p.favLabel = row.querySelector('.c-fav').value.trim();
     p.defLabel = row.querySelector('.c-def').value.trim();
   });
@@ -1329,7 +1367,8 @@ function cfgCollect(){
 
 document.getElementById('btnCfg').addEventListener('click', ()=>{
   draft = {title: title, texts: Object.assign({}, texts), camps: Object.assign({}, camps), table2: TABLE2,
-           params: params.map(p=>Object.assign({}, p)), removed: []};
+           // tous les sous-sujets des deux textes, classés par texte puis par ordre
+           params: allParams.map(p=>Object.assign({}, p)).sort((a,b)=>a.text-b.text || a.ordre-b.ordre), removed: []};
   cfgRender();
   cfgModal.showModal();
   fillTable2Select();
@@ -1347,6 +1386,14 @@ async function fillTable2Select(){
   sel.innerHTML = '<option value="">(aucune — un seul tableau)</option>' +
     ids.map(id=>'<option value="'+esc(id)+'"'+(id===draft.table2?' selected':'')+'>'+esc(id)+'</option>').join('');
 }
+
+// changer le texte d'un sous-sujet le range avec les autres sous-sujets de ce texte
+document.getElementById('cfgParams').addEventListener('change', e=>{
+  if(!e.target.classList.contains('c-text')) return;
+  cfgCollect();
+  draft.params = draft.params.map((p,i)=>({p:p,i:i})).sort((a,b)=>a.p.text-b.p.text || a.i-b.i).map(x=>x.p);
+  cfgRender();
+});
 
 document.getElementById('cfgParams').addEventListener('click', e=>{
   const btn = e.target.closest('button[data-act]');
@@ -1373,9 +1420,10 @@ document.getElementById('cfgParams').addEventListener('click', e=>{
 document.getElementById('cfgAdd').addEventListener('click', ()=>{
   cfgCollect();
   const taken = draft.params.map(p=>p.col);
-  const name = 'Nouveau paramètre ' + (draft.params.length+1);
+  const name = 'Nouveau sous-sujet ' + (draft.params.length+1);
   const col = makeCol(name, taken);
-  draft.params.push({id:col, col:col, name:name, favLabel:'', defLabel:'', hidden:false,
+  // le nouveau sous-sujet est rattaché au texte actuellement affiché
+  draft.params.push({id:col, col:col, name:name, text:active, favLabel:'', defLabel:'', hidden:false,
                      posCol:col+'_Pos', srcCol:col+'_Src', tagCol:col+'_Tag', isNew:true});
   cfgRender();
 });
@@ -1427,11 +1475,12 @@ document.getElementById('cfgSave').addEventListener('click', async ()=>{
     if(renamed.length){
       const choices = JSON.stringify({choices: CAMP_ORDER.map(id=>draft.camps[id])});
       // les noms de camps sont propres à chaque texte : seule la table du texte actif est concernée
-      const t = DS[active].table;
-      actions.push(['ModifyColumn', t, 'Camp', {widgetOptions: choices}]);
-      DS[active].records.forEach(r=>{
-        const hit = renamed.find(id=>camps[id] === String(r.Camp||'').trim());
-        if(hit) actions.push(['UpdateRecord', t, r.id, {Camp: draft.camps[hit]}]);
+      // (colonne Camp du texte 1 ; pour le texte 2 : Camp de la seconde table, ou Camp2 de la table liée)
+      const ds = DS[active], t = ds.campTable, col = ds.campCol;
+      actions.push(['ModifyColumn', t, col, {widgetOptions: choices}]);
+      ds.campRecords.forEach(r=>{
+        const hit = renamed.find(id=>camps[id] === String(r[col]==null?'':r[col]).trim());
+        if(hit){ const f = {}; f[col] = draft.camps[hit]; actions.push(['UpdateRecord', t, r.id, f]); }
       });
     }
     if(actions.length) await applyActions(actions);
@@ -1509,21 +1558,27 @@ async function refresh(){
     catch(e){ return null; }
   };
   const rec1 = (TABLE1 && await read(TABLE1)) || streamRecords;
+  // La seconde table ne fournit que le camp de chaque pays sur le texte 2 (reliée par Code).
   const rec2 = (TABLE2 && TABLE2 !== TABLE1) ? await read(TABLE2) : null;
 
   await ensureExtraCols(1, TABLE1, rec1, Object.keys(EXTRA_COLS));
-  if(rec2) await ensureExtraCols(2, TABLE2, rec2, ['Priorites']);
 
   const has = (recs, c) => recs.length > 0 && Object.prototype.hasOwnProperty.call(recs[0], c);
   hasPlanCols = has(rec1,'Camp2') && has(rec1,'Plan_X') && has(rec1,'Plan_Y');
-  DS[1] = buildDataset(rec1, 1, TABLE1); DS[1].hasPrio = has(rec1,'Priorites');
-  DS[2] = rec2 ? buildDataset(rec2, 2, TABLE2) : null;
-  if(DS[2]) DS[2].hasPrio = has(rec2,'Priorites');
+  // sous-sujets : toutes les colonnes Xxx_Pos de la table liée, chacune rattachée à un texte
+  allParams = rec1.length ? deriveParams(rec1[0]) : [];
+  const byCode = {};
+  (rec2 || []).forEach(r=>{ const k = String(r.Code||'').trim(); if(k) byCode[k] = {rowId:r.id, value:r.Camp}; });
+  DS[1] = buildDataset(rec1, 1, allParams, {table:TABLE1, col:'Camp', records:rec1});
+  DS[2] = buildDataset(rec1, 2, allParams, rec2
+    ? {table:TABLE2, col:'Camp', records:rec2, byCode:byCode}
+    : {table:TABLE1, col:'Camp2', records:rec1});
+  DS[1].hasPrio = DS[2].hasPrio = has(rec1,'Priorites');
   await migrateCampValues(1); await migrateCampValues(2);
   if(TABLE2 && !rec2) grStatus('Table du texte 2 « '+TABLE2+' » introuvable : vérifiez « Configurer ».', true);
-  useDataset(DS[active] ? active : 1);
+  useDataset(active);
   renderChrome(); render(); showSetup();
-  if(params.length && !(TABLE2 && !rec2)) grStatus(data.order.length + ' États membres · ' + params.length + ' paramètres');
+  if(params.length && !(TABLE2 && !rec2)) grStatus(data.order.length + ' États membres · ' + params.length + ' sous-sujets (' + (active===2 ? texts.t2 : texts.t1) + ')');
 }
 
 /* Aligne, une fois par session, les valeurs de la colonne Camp sur les noms de camps du texte
@@ -1533,15 +1588,21 @@ const campMigrated = {};
 async function migrateCampValues(n){
   const ds = DS[n];
   if(!ds || campMigrated[n] || canWrite === false) return;
+  // colonne de camp du texte : Camp (table liée ou seconde table) ou Camp2 (table liée)
+  const recs = ds.campRecords || [];
+  if(!recs.length || !Object.prototype.hasOwnProperty.call(recs[0], ds.campCol)) return;
   campMigrated[n] = true;
   const inMap = campInFor(n), actions = [];
-  ds.records.forEach(r=>{
-    const raw = String(r.Camp==null ? '' : r.Camp).trim();
+  recs.forEach(r=>{
+    const raw = String(r[ds.campCol]==null ? '' : r[ds.campCol]).trim();
     const id = raw ? inMap[norm(raw)] : null;
-    if(id && raw !== campsByText[n][id]) actions.push(['UpdateRecord', ds.table, r.id, {Camp: campsByText[n][id]}]);
+    if(id && raw !== campsByText[n][id]){
+      const f = {}; f[ds.campCol] = campsByText[n][id];
+      actions.push(['UpdateRecord', ds.campTable, r.id, f]);
+    }
   });
   if(!actions.length) return;
-  actions.unshift(['ModifyColumn', ds.table, 'Camp', {widgetOptions: JSON.stringify({choices: CAMP_ORDER.map(id=>campsByText[n][id])})}]);
+  actions.unshift(['ModifyColumn', ds.campTable, ds.campCol, {widgetOptions: JSON.stringify({choices: CAMP_ORDER.map(id=>campsByText[n][id])})}]);
   try{ await applyActions(actions); }
   catch(e){ if(isAccessError(e)) canWrite = false; }
 }
