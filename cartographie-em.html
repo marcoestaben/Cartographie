@@ -566,6 +566,9 @@ function deriveParams(rec, src){
   })).sort((a,b)=> a.ordre - b.ordre || a.name.localeCompare(b.name,'fr'));
 }
 
+// Clé de comparaison d'un nom de sous-sujet : insensible à la casse, aux accents et à la ponctuation.
+const prioKey = s => norm(s).replace(/[^a-z0-9]/g, '');
+
 /* Table de reconnaissance des libellés de camp d'un texte. Les libellés diffèrent d'un texte
    à l'autre ; les anciens libellés (« Pro-réforme », « Pro-statu quo ») restent reconnus. */
 function campInFor(t){
@@ -582,6 +585,9 @@ function buildDataset(recs, n, allParams, campSrc){
   const params = allParams.filter(p=>p.text===n);
   const campIn = campInFor(n);
   const c = {}, order = []; let tot = 0;
+  const prioByName = {};
+  params.forEach(p=>{ prioByName[prioKey(p.id)] = p.id; prioByName[prioKey(p.name)] = p.id; });
+  const prioInTable2 = !!campSrc.prioInTable2;
   recs.forEach(r=>{
     const code = String(r.Code||'').trim();
     if(!code) return;
@@ -595,8 +601,11 @@ function buildDataset(recs, n, allParams, campSrc){
       const tag = p.tagCol ? String(row[p.tagCol]||'').trim() : '';
       if(st || src || tag) pos[p.id] = {stance: st||'amb', source: src, label: tag};
     });
-    const prio = String(r.Priorites||'').split(',').map(s=>s.trim())
-      .filter((id,i,a)=>id && a.indexOf(id)===i && params.some(p=>p.id===id));
+    // priorités : noms de sous-sujets séparés par des virgules, du plus au moins prioritaire.
+    // Colonne « Priorites » de la table source du texte (seconde table pour le texte 2 si elle l'a).
+    const rawPrio = (n === 2 && prioInTable2 && row2) ? row2.Priorites : r.Priorites;
+    const prio = String(rawPrio||'').split(',').map(s=>prioByName[prioKey(s)])
+      .filter((id,i,a)=>id && a.indexOf(id)===i);
     // camp : colonne Camp pour le texte 1 ; pour le texte 2, seconde table (reliée par Code) sinon colonne Camp2
     let rawCamp = r.Camp;
     if(n === 2){
@@ -610,7 +619,7 @@ function buildDataset(recs, n, allParams, campSrc){
     order.push(code); tot += Number(r.Poids)||0;
   });
   return {n:n, table:TABLE1, records:recs, params:params, data:{countries:c, order:order}, total:tot || 1,
-          campTable:campSrc.table, campCol:campSrc.col, campRecords:campSrc.records, campByCode:campSrc.byCode || null};
+          campTable:campSrc.table, campCol:campSrc.col, campRecords:campSrc.records, campByCode:campSrc.byCode || null, prioInTable2:!!campSrc.prioInTable2};
 }
 
 /* Rend actif un des deux textes : les globals de la vue 1D pointent sur son jeu de données. */
@@ -636,6 +645,7 @@ async function pushRowTo(n, code, fields){
       fields = Object.assign({}, fields);
       const cols2 = new Set();
       ds.params.filter(p=>p.src===2).forEach(p=>[p.posCol,p.srcCol,p.tagCol].filter(Boolean).forEach(c=>cols2.add(c)));
+      if(ds.prioInTable2) cols2.add('Priorites');
       const f2 = {};
       Object.keys(fields).forEach(k=>{ if(cols2.has(k)){ f2[k] = fields[k]; delete fields[k]; } });
       if('Camp' in fields){ const campVal = fields.Camp; delete fields.Camp; await writeCamp2(code, campVal); }
@@ -1264,9 +1274,15 @@ document.getElementById('mSave').addEventListener('click', async ()=>{
   const sameAsGlobal = ids.length===params.length && ids.every((id,i)=>id===params[i].id);
   d.prio = sameAsGlobal ? [] : ids;
   if(hasPrioCol){
-    // une seule colonne pour les deux textes : on conserve l'ordre déjà saisi pour l'autre texte
-    const other = DS[n===1 ? 2 : 1].data.countries[code];
-    fields.Priorites = d.prio.concat(other ? other.prio : []).join(',');
+    // priorités = noms de sous-sujets séparés par des virgules (le plus prioritaire d'abord)
+    const namesOf = (ds, ids) => ids.map(id=>{ const q = ds.params.find(x=>x.id===id); return q ? q.name : null; }).filter(Boolean);
+    let names = namesOf(DS[n], d.prio);
+    // colonne partagée (une seule table) : on conserve l'ordre déjà saisi pour l'autre texte
+    if(!(n===2 && DS[2].prioInTable2)){
+      const m = n===1 ? 2 : 1, other = DS[m].data.countries[code];
+      if(!(m===2 && DS[2].prioInTable2) && other) names = names.concat(namesOf(DS[m], other.prio));
+    }
+    fields.Priorites = names.join(', ');
   }
   document.querySelectorAll('#mParams .param').forEach(el=>{
     const p=params.find(x=>x.id===el.dataset.p);
@@ -1586,6 +1602,7 @@ async function refresh(){
   const rec2 = (TABLE2 && TABLE2 !== TABLE1) ? await read(TABLE2) : null;
 
   await ensureExtraCols(1, TABLE1, rec1, Object.keys(EXTRA_COLS));
+  if(rec2) await ensureExtraCols(2, TABLE2, rec2, ['Priorites']);   // priorités propres au texte 2
 
   const has = (recs, c) => recs.length > 0 && Object.prototype.hasOwnProperty.call(recs[0], c);
   hasPlanCols = has(rec1,'Camp2') && has(rec1,'Plan_X') && has(rec1,'Plan_Y');
@@ -1596,10 +1613,12 @@ async function refresh(){
   const byCode = {};
   (rec2 || []).forEach(r=>{ const k = String(r.Code||'').trim(); if(k) byCode[k] = {rowId:r.id, value:r.Camp, row:r}; });
   DS[1] = buildDataset(rec1, 1, allParams, {table:TABLE1, col:'Camp', records:rec1});
+  const prioInTable2 = !!rec2 && has(rec2, 'Priorites');
   DS[2] = buildDataset(rec1, 2, allParams, rec2
-    ? {table:TABLE2, col:'Camp', records:rec2, byCode:byCode}
+    ? {table:TABLE2, col:'Camp', records:rec2, byCode:byCode, prioInTable2:prioInTable2}
     : {table:TABLE1, col:'Camp2', records:rec1});
-  DS[1].hasPrio = DS[2].hasPrio = has(rec1,'Priorites');
+  DS[1].hasPrio = has(rec1, 'Priorites');
+  DS[2].hasPrio = prioInTable2 || DS[1].hasPrio;
   await migrateCampValues(1); await migrateCampValues(2);
   if(TABLE2 && !rec2) grStatus('Table du texte 2 « '+TABLE2+' » introuvable : vérifiez « Configurer ».', true);
   useDataset(active);
