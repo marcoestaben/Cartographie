@@ -20,12 +20,12 @@
     --paper:#FFFFFF;
     --rule:#DDDDDD;           /* filets */
     --rule-2:#EEEEEE;
-    --bf:#000091;             /* Bleu France */
-    --bf-bg:#F5F5FE;
+    --bf:#0F6154;             /* Vert foncé : accent de l'interface */
+    --bf-bg:#EAF3F0;
     --rouge:#E1000F;          /* Rouge Marianne, réservé au bloc-marque */
     /* Les deux camps : deux teintes catégorielles, sans valeur positive ni négative */
-    --reforme:#000091;        /* Bleu France */
-    --reforme-bg:#E3E3FD;
+    --reforme:#0F6154;        /* Vert foncé */
+    --reforme-bg:#DDEBE7;
     --indecis:#666666;        /* Gris */
     --indecis-bg:#EEEEEE;
     --ets:#C2570C;            /* Orange doux (contraste ≈ 4,6:1 avec le blanc) */
@@ -825,7 +825,7 @@ function renderChrome(){
   document.getElementById('btnT1').textContent = texts.t1;
   document.getElementById('btnT2').textContent = texts.t2;
   document.getElementById('legend').innerHTML =
-    'Jalons <b style="color:var(--reforme)">bleus</b> : lus depuis la gauche, camp « '+esc(campName('reforme',1))+' » ('+esc(texts.t1)+') ou « '+esc(campName('reforme',2))+' » ('+esc(texts.t2)+'). ' +
+    'Jalons <b style="color:var(--reforme)">verts</b> : lus depuis la gauche, camp « '+esc(campName('reforme',1))+' » ('+esc(texts.t1)+') ou « '+esc(campName('reforme',2))+' » ('+esc(texts.t2)+'). ' +
     'Jalons <b style="color:var(--ets)">orange</b> : lus depuis la droite, camp « '+esc(campName('ets',1))+' » ou « '+esc(campName('ets',2))+' ». ' +
     'Minorité de blocage : 4 États membres et plus de 35 %. Majorité qualifiée : 15 États membres et 65 %.';
   const vis = visibleParams();
