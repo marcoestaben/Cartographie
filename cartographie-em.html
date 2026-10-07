@@ -28,8 +28,8 @@
     --reforme-bg:#E3E3FD;
     --indecis:#666666;        /* Gris */
     --indecis-bg:#EEEEEE;
-    --ets:#0F6154;            /* Vert */
-    --ets-bg:#DDEBE7;
+    --ets:#C2570C;            /* Orange doux (contraste ≈ 4,6:1 avec le blanc) */
+    --ets-bg:#FBE9DC;
     --amb:#666666;            /* Position ambiguë : gris neutre */
     --amb-bg:#EEEEEE;
     --focus:#0A76F6;
@@ -826,7 +826,7 @@ function renderChrome(){
   document.getElementById('btnT2').textContent = texts.t2;
   document.getElementById('legend').innerHTML =
     'Jalons <b style="color:var(--reforme)">bleus</b> : lus depuis la gauche, camp « '+esc(campName('reforme',1))+' » ('+esc(texts.t1)+') ou « '+esc(campName('reforme',2))+' » ('+esc(texts.t2)+'). ' +
-    'Jalons <b style="color:var(--ets)">verts</b> : lus depuis la droite, camp « '+esc(campName('ets',1))+' » ou « '+esc(campName('ets',2))+' ». ' +
+    'Jalons <b style="color:var(--ets)">orange</b> : lus depuis la droite, camp « '+esc(campName('ets',1))+' » ou « '+esc(campName('ets',2))+' ». ' +
     'Minorité de blocage : 4 États membres et plus de 35 %. Majorité qualifiée : 15 États membres et 65 %.';
   const vis = visibleParams();
   if(pFilterValue && !vis.some(p=>p.id===pFilterValue)) pFilterValue = '';
