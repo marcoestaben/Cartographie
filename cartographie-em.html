@@ -264,7 +264,7 @@
   </div>
   <span class="seg-btns" role="group" aria-label="Texte affiché">
     <button class="btn ghost" id="btnT1" aria-pressed="true">CAFE</button>
-    <button class="btn ghost" id="btnT2" aria-pressed="false" hidden>IAA</button>
+    <button class="btn ghost" id="btnT2" aria-pressed="false">IAA</button>
   </span>
   <button class="btn ghost" id="btnPlane" aria-pressed="false">Plan 2D</button>
   <button class="btn ghost" id="btnCompact" aria-pressed="false">Vue compacte</button>
@@ -328,7 +328,7 @@
    Deux conventions de nommage reconnues :
      · suffixe  : Plafond_Pos / Plafond_Src / Plafond_Tag
      · préfixe  : Position_Plafond / Source_Plafond / Tag_Plafond  (import Excel)
-   La table « Config » (Cle / Valeur) porte les intitulés lisibles :
+   Les options du widget (grist.setOptions, clé « cfg ») portent les intitulés lisibles :
      titre · camp_reforme · camp_indecis · camp_ets
      param.<Col>.nom · param.<Col>.fav · param.<Col>.def · param.<Col>.ordre
    Le bouton « Configurer » écrit ces réglages ET modifie les colonnes.
@@ -360,7 +360,7 @@ let CFG = {};
 let TABLE = null;
 let lastRecords = [];
 /* Deux textes = deux tables Grist de même structure (Code, Pays, Poids, Camp, Xxx_Pos…).
-   DS[1] = table liée au widget, DS[2] = seconde table (clé Config « table2 »).
+   DS[1] = table liée au widget, DS[2] = seconde table (option « table2 »).
    Les globals params / data / TOTAL / TABLE / lastRecords reflètent le texte ACTIF (vue 1D) ;
    le plan 2D et le croisement lisent toujours DS[1] et DS[2]. */
 let DS = {1:null, 2:null};
@@ -488,6 +488,8 @@ async function makeColumnsVisible(colIds, tableId){
 
 async function loadConfig(){
   CFG = {};
+  // Ancienne table « Config » (si elle existe encore) : lue pour reprendre les réglages
+  // déjà saisis ; elle n'est jamais créée ni écrite.
   try{
     const t = await grist.docApi.fetchTable('Config');
     const keys = t.Cle || t.Key || t['Clé'] || [];
@@ -496,6 +498,10 @@ async function loadConfig(){
       const k = String(keys[i]||'').trim();
       if(k) CFG[k] = String(vals[i]==null?'':vals[i]).trim();
     }
+  }catch(e){}
+  try{
+    const o = await grist.getOptions();
+    if(o && o.cfg) Object.keys(o.cfg).forEach(k=>{ CFG[k] = String(o.cfg[k]==null?'':o.cfg[k]); });
   }catch(e){}
   camps = Object.assign({}, DEFAULT_CAMPS);
   CAMP_ORDER.forEach(id=>{ if(CFG['camp_'+id]) camps[id] = CFG['camp_'+id]; });
@@ -643,30 +649,10 @@ async function repairSchema(){
 }
 
 /* ---------- Écriture de la configuration ---------- */
-/* La table Config peut préexister avec d'autres colonnes (Grist crée A, B, C par
-   défaut) : on repère les colonnes utiles, on crée celles qui manquent, et on ne
-   suppose jamais que « Cle » existe. */
-async function ensureConfigTable(){
-  let t = null;
-  try{ t = await grist.docApi.fetchTable('Config'); }
-  catch(e){
-    await applyActions([['AddTable','Config',[{id:'Cle',type:'Text'},{id:'Valeur',type:'Text'}]]]);
-    t = await grist.docApi.fetchTable('Config');
-  }
-  let keyCol = ('Cle' in t) ? 'Cle' : ('Key' in t) ? 'Key' : ('Clé' in t) ? 'Clé' : null;
-  let valCol = ('Valeur' in t) ? 'Valeur' : ('Value' in t) ? 'Value' : null;
-  const toAdd = [];
-  if(!keyCol){ toAdd.push(['AddColumn','Config','Cle',{type:'Text', label:'Clé'}]); keyCol = 'Cle'; }
-  if(!valCol){ toAdd.push(['AddColumn','Config','Valeur',{type:'Text', label:'Valeur'}]); valCol = 'Valeur'; }
-  if(toAdd.length){
-    await applyActions(toAdd);
-    t = await grist.docApi.fetchTable('Config');
-  }
-  return {table:t, keyCol:keyCol, valCol:valCol};
-}
-
+/* Les réglages (titres, noms des camps, table du texte 2, libellés des paramètres) sont
+   rangés dans les options du widget, enregistrées dans le document Grist : aucune table
+   supplémentaire n'est créée. */
 async function writeConfig(paramList, campList, newTitle, newTexts, newTable2){
-  const {table, keyCol, valCol} = await ensureConfigTable();
   const entries = {titre: newTitle};
   const tx = newTexts || texts;
   entries.texte1 = tx.t1; entries.texte2 = tx.t2;
@@ -680,16 +666,9 @@ async function writeConfig(paramList, campList, newTitle, newTexts, newTable2){
     entries[pfx+'param.'+p.col+'.masque'] = p.hidden ? '1' : '';
     entries[pfx+'param.'+p.col+'.ordre'] = String(i+1);
   });
-  const keys = table[keyCol] || [], ids = table.id || [];
-  const byKey = {};
-  keys.forEach((k,i)=>{ const s = String(k==null?'':k).trim(); if(s) byKey[s] = ids[i]; });
-  const actions = [];
-  Object.keys(entries).forEach(k=>{
-    const f = {}; f[valCol] = entries[k];
-    if(byKey[k] !== undefined){ actions.push(['UpdateRecord','Config', byKey[k], f]); }
-    else { const g = {}; g[keyCol] = k; g[valCol] = entries[k]; actions.push(['AddRecord','Config', null, g]); }
-  });
-  if(actions.length) await applyActions(actions);
+  const cfg = Object.assign({}, CFG, entries);
+  await grist.setOptions({cfg: cfg});
+  CFG = cfg;
 }
 
 /* ---------- Rendu ---------- */
@@ -757,12 +736,18 @@ function coordOf(code){
   return {x:x, y:y};
 }
 const clamp100 = v => Math.max(0, Math.min(100, v));
+/* Garde le disque entier dans le cadre : le centre reste à au moins un rayon (+ bordure) du bord. */
+function clampInPlane(plane, size, x, y){
+  const r = plane.getBoundingClientRect();
+  if(!r.width || !r.height) return {x:clamp100(x), y:clamp100(y)};
+  const mx = (size/2 + 3)/r.width*100, my = (size/2 + 3)/r.height*100;
+  return {x: Math.max(mx, Math.min(100-mx, x)), y: Math.max(my, Math.min(100-my, y))};
+}
 
 function renderChrome(){
   document.getElementById('title').textContent = title;
   document.getElementById('btnT1').textContent = texts.t1;
   document.getElementById('btnT2').textContent = texts.t2;
-  document.getElementById('btnT2').hidden = !DS[2];
   document.getElementById('legend').innerHTML =
     'Jalons <b style="color:var(--reforme)">bleus</b> : lus depuis la gauche, camp « '+esc(camps.reforme)+' ». ' +
     'Jalons <b style="color:var(--ets)">verts</b> : lus depuis la droite, camp « '+esc(camps.ets)+' ». ' +
@@ -1083,7 +1068,8 @@ function renderPlane(){
     const size = Math.round(26 + Math.sqrt(d.w)*5);
     const dot = document.createElement('div');
     dot.className = 'dot'; dot.dataset.code = code;
-    dot.style.cssText = 'left:'+pt.x+'%;bottom:'+pt.y+'%;width:'+size+'px;height:'+size+'px';
+    const cp = clampInPlane(plane, size, pt.x, pt.y);
+    dot.style.cssText = 'left:'+cp.x+'%;bottom:'+cp.y+'%;width:'+size+'px;height:'+size+'px';
     dot.title = d.name+' — '+d.w.toFixed(2)+' % · '+texts.t1+' : '+camps[d.camp]+' · '+texts.t2+' : '+camps[camp2Of(code)];
     dot.innerHTML = '<span class="flag">'+(FLAGS[code]||'')+'</span><span class="dc">'+esc(code)+'</span>';
     wireDot(dot, plane, code);
@@ -1095,7 +1081,7 @@ function wireDot(dot, plane, code){
   let sx=0, sy=0, moved=false;
   const pos = e => {
     const r = plane.getBoundingClientRect();
-    return {x: clamp100((e.clientX-r.left)/r.width*100), y: clamp100((r.bottom-e.clientY)/r.height*100)};
+    return clampInPlane(plane, dot.offsetWidth, (e.clientX-r.left)/r.width*100, (r.bottom-e.clientY)/r.height*100);
   };
   dot.addEventListener('pointerdown', e=>{
     sx=e.clientX; sy=e.clientY; moved=false;
@@ -1244,7 +1230,12 @@ document.getElementById('btnPlane').addEventListener('click', ()=>{
 });
 // Choix du texte affiché en vue 1D : quitte le plan 2D et change le jeu de données actif.
 [1,2].forEach(n=>document.getElementById('btnT'+n).addEventListener('click', ()=>{
-  if(!DS[n]) return;
+  if(!DS[n]){
+    // seconde table pas encore reliée : on ouvre « Configurer » pour la choisir
+    grStatus('Choisissez la table Grist du texte « '+texts.t2+' » dans « Configurer ».', true);
+    document.getElementById('btnCfg').click();
+    return;
+  }
   planeMode = false;
   pFilterValue = '';                // les paramètres diffèrent d'un texte à l'autre
   useDataset(n);
@@ -1265,7 +1256,7 @@ function cfgRender(){
   document.getElementById('cfgT1').value = draft.texts.t1;
   document.getElementById('cfgT2').value = draft.texts.t2;
   document.getElementById('cfgIntro').innerHTML =
-    'Les modifications sont écrites dans le document Grist : renommer met à jour la table <b>Config</b>, '
+    'Les modifications sont écrites dans le document Grist : renommer met à jour les options du widget, '
     + 'ajouter ou supprimer un paramètre crée ou retire les colonnes correspondantes ; cocher « Cacher ce paramètre et ses tags » le retire de la vue pays sans supprimer ses données. '
     + 'Table cible : <b>' + esc(TABLE || '—') + '</b>.';
   document.getElementById('cfgCamps').innerHTML = CAMP_ORDER.map((id,i)=>
@@ -1458,7 +1449,7 @@ document.getElementById('cfgSave').addEventListener('click', async ()=>{
         : 'Configuration appliquée dans Grist');
     }catch(e2){
       camps = Object.assign({}, draft.camps); title = draft.title; texts = Object.assign({}, draft.texts);
-      grStatus('Colonnes et camps mis à jour, mais la table Config n\'a pas pu être écrite : '+errText(e2), true);
+      grStatus('Colonnes et camps mis à jour, mais les options du widget n\'ont pas pu être écrites : '+errText(e2), true);
     }
     cfgModal.close();
     await refresh();
