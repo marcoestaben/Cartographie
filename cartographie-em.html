@@ -608,9 +608,41 @@ function defaultTextOf(col, name){
   const s = norm(col+' '+name).replace(/[^a-z0-9]/g,'');
   return /m1e|madeineurope/.test(s) ? 2 : 1;
 }
+/* Métadonnées des colonnes {table: {colId: {ref, label}}} : la référence interne d'une colonne ne change
+   jamais, même si son identifiant est recalculé par Grist après un renommage dans la table. */
+let COLMETA = {};
+async function loadColMeta(tableIds){
+  COLMETA = {};
+  try{
+    const tables = await grist.docApi.fetchTable('_grist_Tables');
+    const cols = await grist.docApi.fetchTable('_grist_Tables_column');
+    const tid = {};
+    (tables.id||[]).forEach((id,i)=>{ tid[id] = tables.tableId[i]; });
+    (cols.id||[]).forEach((id,i)=>{
+      const t = tid[cols.parentId[i]];
+      if(!t || tableIds.indexOf(t) === -1) return;
+      (COLMETA[t] = COLMETA[t] || {})[cols.colId[i]] = {ref: id, label: cols.label ? cols.label[i] : ''};
+    });
+  }catch(e){}
+}
 function deriveParams(rec, src){
   const pfx = '';   // réglages communs aux deux textes ; src = table où vivent les colonnes (1 = liée, 2 = seconde table)
   src = src === 2 ? 2 : 1;
+  const meta = COLMETA[src === 2 ? TABLE2 : TABLE1] || {};
+  // réglages d'un sous-sujet : par identifiant de colonne, sinon par référence de colonne (si l'identifiant a changé)
+  const cfgOf = (col, posCol, key) => {
+    const v = CFG['param.'+col+'.'+key];
+    if(v !== undefined) return v;
+    const ref = meta[posCol] && String(meta[posCol].ref);
+    if(!ref) return undefined;
+    const old = Object.keys(CFG).find(k=>/^param\..*\.ref$/.test(k) && CFG[k] === ref);
+    return old ? CFG[old.replace(/\.ref$/, '.'+key)] : undefined;
+  };
+  const labelName = posCol => {
+    const l = meta[posCol] && String(meta[posCol].label||'');
+    const m = l && l.match(/^\s*Position\s*[—–-]\s*(.+?)\s*$/i);
+    return m ? m[1] : '';
+  };
   const keys = Object.keys(rec);
   const found = {};   // col -> {posCol, srcCol, tagCol}
   keys.forEach(k=>{
@@ -625,19 +657,24 @@ function deriveParams(rec, src){
     found[col] = found[col] || {};
     found[col][kind+'Col'] = k;
   });
-  return Object.keys(found).filter(c=>found[c].posCol).map(col=>({
+  return Object.keys(found).filter(c=>found[c].posCol).map(col=>{
+    const pc = found[col].posCol, g = key => cfgOf(col, pc, key);
+    const nom = g('nom') || labelName(pc) || col;
+    return {
     id: col, col: col, src: src,
-    posCol: found[col].posCol,
+    ref: meta[pc] ? meta[pc].ref : null,
+    posCol: pc,
     srcCol: found[col].srcCol || null,
     tagCol: found[col].tagCol || null,
-    name: CFG[pfx+'param.'+col+'.nom'] || col,
-    favLabel: CFG[pfx+'param.'+col+'.fav'] || '',
-    defLabel: CFG[pfx+'param.'+col+'.def'] || '',
-    hidden: /^(1|true|oui|yes)$/i.test(CFG[pfx+'param.'+col+'.masque'] || ''),
-    ordre: Number(CFG[pfx+'param.'+col+'.ordre'] || 999),
-    text: src === 2 ? 2 : Number(CFG[pfx+'param.'+col+'.texte']) === 2 ? 2
-        : Number(CFG[pfx+'param.'+col+'.texte']) === 1 ? 1 : defaultTextOf(col, CFG[pfx+'param.'+col+'.nom'] || col)
-  })).sort((a,b)=> a.ordre - b.ordre || a.name.localeCompare(b.name,'fr'));
+    name: nom,
+    favLabel: g('fav') || '',
+    defLabel: g('def') || '',
+    hidden: /^(1|true|oui|yes)$/i.test(g('masque') || ''),
+    ordre: Number(g('ordre') || 999),
+    text: src === 2 ? 2 : Number(g('texte')) === 2 ? 2
+        : Number(g('texte')) === 1 ? 1 : defaultTextOf(col, nom)
+    };
+  }).sort((a,b)=> a.ordre - b.ordre || a.name.localeCompare(b.name,'fr'));
 }
 
 // Clé de comparaison d'un nom de sous-sujet : insensible à la casse, aux accents et à la ponctuation.
@@ -809,6 +846,7 @@ async function writeConfig(paramList, campList, newTitle, newTexts, newTable2, n
   paramList.forEach(p=>{
     const t = p.text === 2 ? 2 : 1;
     entries['param.'+p.col+'.nom'] = p.name;
+    if(p.ref) entries['param.'+p.col+'.ref'] = String(p.ref);
     entries['param.'+p.col+'.fav'] = p.favLabel || '';
     entries['param.'+p.col+'.def'] = p.defLabel || '';
     entries['param.'+p.col+'.masque'] = p.hidden ? '1' : '';
@@ -1831,6 +1869,7 @@ async function refresh(){
   // La seconde table ne fournit que le camp de chaque pays sur le texte 2 (reliée par Code).
   const rec2 = (TABLE2 && TABLE2 !== TABLE1) ? await read(TABLE2) : null;
 
+  await loadColMeta([TABLE1, TABLE2].filter(Boolean));
   await ensureExtraCols(1, TABLE1, rec1, Object.keys(EXTRA_COLS));
   if(rec2) await ensureExtraCols(2, TABLE2, rec2, ['Priorites']);   // priorités propres au texte 2
 
