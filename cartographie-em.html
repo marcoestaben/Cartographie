@@ -1617,7 +1617,7 @@ document.getElementById('btnCfg').addEventListener('click', ()=>{
   draft = {title: title, texts: Object.assign({}, texts), camps: Object.assign({}, camps), table2: TABLE2,
            auto: Object.assign({}, autoOn), weights: {1: weightsBy[1].slice(), 2: weightsBy[2].slice()},
            // tous les sous-sujets des deux textes, classés par texte puis par ordre
-           params: allParams.map(p=>Object.assign({}, p)).sort((a,b)=>a.text-b.text || a.ordre-b.ordre), removed: []};
+           params: allParams.map(p=>Object.assign({}, p, {origName: p.name})).sort((a,b)=>a.text-b.text || a.ordre-b.ordre), removed: []};
   cfgRender();
   cfgModal.showModal();
   fillTable2Select();
@@ -1723,12 +1723,19 @@ document.getElementById('cfgSave').addEventListener('click', async ()=>{
       [p.posCol, p.srcCol, p.tagCol].filter(Boolean).forEach(c=>actions.push(['RemoveColumn', tblOf(p), c]));
     });
     // libellés de colonnes mis à jour après renommage
+    // L'identifiant de colonne est d'abord détaché du libellé (action séparée, appliquée avant) :
+    // sinon Grist renomme l'identifiant en même temps que le libellé et les réglages du sous-sujet sont perdus.
+    // Seuls les sous-sujets effectivement renommés voient leur libellé modifié.
+    const untie = [];
     draft.params.filter(p=>!p.isNew).forEach(p=>{
       const T = tblOf(p);
-      actions.push(['ModifyColumn', T, p.posCol, {untieColIdFromLabel:true, label:'Position — '+p.name}]);
-      if(p.srcCol) actions.push(['ModifyColumn', T, p.srcCol, {untieColIdFromLabel:true, label:'Source — '+p.name}]);
-      if(p.tagCol) actions.push(['ModifyColumn', T, p.tagCol, {untieColIdFromLabel:true, label:'Tag — '+p.name}]);
+      [p.posCol, p.srcCol, p.tagCol].filter(Boolean).forEach(c=>untie.push(['ModifyColumn', T, c, {untieColIdFromLabel:true}]));
+      if(p.name === p.origName) return;
+      actions.push(['ModifyColumn', T, p.posCol, {label:'Position — '+p.name}]);
+      if(p.srcCol) actions.push(['ModifyColumn', T, p.srcCol, {label:'Source — '+p.name}]);
+      if(p.tagCol) actions.push(['ModifyColumn', T, p.tagCol, {label:'Tag — '+p.name}]);
     });
+    if(untie.length) await applyActions(untie);
     // camps renommés : liste de choix ET valeurs déjà saisies
     const renamed = CAMP_ORDER.filter(id=>draft.camps[id] !== camps[id]);
     if(renamed.length){
