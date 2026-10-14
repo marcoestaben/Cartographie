@@ -773,10 +773,10 @@ async function repairSchema(){
   try{
     const actions = [];
     DEFAULT_PARAMS.forEach(([col,name])=>{
-      actions.push(['AddColumn', TABLE, col+'_Pos', {type:'Choice', label:'Position — '+name,
+      actions.push(['AddColumn', TABLE, col+'_Pos', {type:'Choice', untieColIdFromLabel:true, label:'Position — '+name,
         widgetOptions: JSON.stringify({choices: POSITIONS})}]);
-      actions.push(['AddColumn', TABLE, col+'_Src', {type:'Text', label:'Source — '+name}]);
-      actions.push(['AddColumn', TABLE, col+'_Tag', {type:'Text', label:'Tag — '+name}]);
+      actions.push(['AddColumn', TABLE, col+'_Src', {type:'Text', untieColIdFromLabel:true, label:'Source — '+name}]);
+      actions.push(['AddColumn', TABLE, col+'_Tag', {type:'Text', untieColIdFromLabel:true, label:'Tag — '+name}]);
     });
     const present = lastRecords.length ? Object.keys(lastRecords[0]) : [];
     Object.keys(EXTRA_COLS).filter(c=>!present.includes(c) && (active===1 || c==='Priorites')).forEach(c=>actions.push(['AddColumn', TABLE, c, EXTRA_COLS[c]()]));
@@ -1714,10 +1714,10 @@ document.getElementById('cfgSave').addEventListener('click', async ()=>{
     const tblOf = p => p.src === 2 ? (p.isNew ? draft.table2 : TABLE2) : TABLE1;
     newParams.forEach(p=>{
       const T = tblOf(p);
-      actions.push(['AddColumn', T, p.posCol, {type:'Choice', label:'Position — '+p.name,
+      actions.push(['AddColumn', T, p.posCol, {type:'Choice', untieColIdFromLabel:true, label:'Position — '+p.name,
         widgetOptions: JSON.stringify({choices: POSITIONS})}]);
-      actions.push(['AddColumn', T, p.srcCol, {type:'Text', label:'Source — '+p.name}]);
-      actions.push(['AddColumn', T, p.tagCol, {type:'Text', label:'Tag — '+p.name}]);
+      actions.push(['AddColumn', T, p.srcCol, {type:'Text', untieColIdFromLabel:true, label:'Source — '+p.name}]);
+      actions.push(['AddColumn', T, p.tagCol, {type:'Text', untieColIdFromLabel:true, label:'Tag — '+p.name}]);
     });
     draft.removed.forEach(p=>{
       [p.posCol, p.srcCol, p.tagCol].filter(Boolean).forEach(c=>actions.push(['RemoveColumn', tblOf(p), c]));
@@ -1725,9 +1725,9 @@ document.getElementById('cfgSave').addEventListener('click', async ()=>{
     // libellés de colonnes mis à jour après renommage
     draft.params.filter(p=>!p.isNew).forEach(p=>{
       const T = tblOf(p);
-      actions.push(['ModifyColumn', T, p.posCol, {label:'Position — '+p.name}]);
-      if(p.srcCol) actions.push(['ModifyColumn', T, p.srcCol, {label:'Source — '+p.name}]);
-      if(p.tagCol) actions.push(['ModifyColumn', T, p.tagCol, {label:'Tag — '+p.name}]);
+      actions.push(['ModifyColumn', T, p.posCol, {untieColIdFromLabel:true, label:'Position — '+p.name}]);
+      if(p.srcCol) actions.push(['ModifyColumn', T, p.srcCol, {untieColIdFromLabel:true, label:'Source — '+p.name}]);
+      if(p.tagCol) actions.push(['ModifyColumn', T, p.tagCol, {untieColIdFromLabel:true, label:'Tag — '+p.name}]);
     });
     // camps renommés : liste de choix ET valeurs déjà saisies
     const renamed = CAMP_ORDER.filter(id=>draft.camps[id] !== camps[id]);
